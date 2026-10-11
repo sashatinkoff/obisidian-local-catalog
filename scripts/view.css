@@ -290,3 +290,15 @@ body.theme-light {
     -webkit-text-fill-color: transparent;
     vertical-align: middle;
 }
+
+/* ---------- Ширина на весь экран (опция fullWidth) ---------- */
+.full-width {
+    --file-line-width: 100%;
+}
+
+.full-width .markdown-source-view.is-readable-line-width .cm-sizer,
+.full-width .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.full-width.markdown-source-view.is-readable-line-width .cm-sizer,
+.full-width.markdown-preview-view.is-readable-line-width .markdown-preview-sizer {
+    max-width: 100% !important;
+}

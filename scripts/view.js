@@ -23,7 +23,9 @@ const defaults = {
     defaultView: "cards",             // "cards" | "table"
     defaultSort: "date_desc",         // date_desc | date_asc | title_asc | title_desc
     storageKey: "obsidian-book-gallery-view",
-    cssPath: null,                    // путь к своему CSS-файлу в хранилище; null — встроенные стили
+    fullWidth: false,                 // растянуть заметку на всю ширину (вместо cssclasses во frontmatter)
+    fullWidthClasses: ["max", "full-width"], // классы, которые добавляются заметке при fullWidth: true
+    cssPath: "scripts/book-gallery/view.css", // путь к CSS-файлу от корня хранилища
     searchDebounce: 150,              // мс
 };
 
@@ -33,312 +35,18 @@ const cfg = Object.assign({}, defaults, user, {
 });
 const F = cfg.fields;
 
-// ---------- СТИЛИ (встроены в скрипт, отдельный CSS-файл не нужен) ----------
-const BOOK_CSS = `
-/* Цвета в одном месте: меняйте здесь.
-   Obsidian ставит на body класс theme-dark или theme-light,
-   поэтому для каждой темы своя палитра. */
-body.theme-dark {
-    --bg-card: #22272a;
-    --bg-input: #2e3438;
-    --bg-hover: #3a4247;
-    --bg-row-hover: #2a3034;
-    --border: #333a3e;
-    --border-input: #3e464b;
-    --accent: #c9a971;
-    --muted: #8a9297;
-    --star-on: #c9a971;
-    --star-off: #3e464b;
-    --text-hover: #ffffff;
-    --card-shadow: rgba(0, 0, 0, 0.3);
-}
-
-body.theme-light {
-    --bg-card: #f6f3ec;
-    --bg-input: #ebe7dc;
-    --bg-hover: #ded9cb;
-    --bg-row-hover: #efebe1;
-    --border: #d9d4c7;
-    --border-input: #cfc9ba;
-    --accent: #8a6a2f;
-    --muted: #6b7378;
-    --star-on: #c9a24d;
-    --star-off: #d5cfc0;
-    --text-hover: #1f2326;
-    --card-shadow: rgba(0, 0, 0, 0.12);
-}
-
-/* ---------- Панель управления ---------- */
-.book-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 15px;
-    background-color: var(--bg-card);
-    padding: 16px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-}
-
-.book-filters-row {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-
-.book-search-input,
-.book-select,
-.book-view-btn {
-    height: auto !important; /* отменяем жёсткую высоту Obsidian */
-    padding: 14px 20px;
-    border-radius: 8px;
-    background-color: var(--bg-input);
-    border: 1px solid var(--border-input);
-    font-size: 1.1em;
-    box-sizing: border-box;
-}
-
-.book-search-input {
-    width: 100%;
-    color: var(--accent);
-    line-height: 1.5;
-}
-
-.book-select {
-    flex: 1;
-    min-width: 200px;
-    color: var(--muted);
-    line-height: 1.5;
-    cursor: pointer;
-}
-
-.book-view-btn {
-    color: var(--accent);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s, color 0.2s;
-}
-
-.book-view-btn:hover {
-    background-color: var(--bg-hover);
-    color: var(--text-hover);
-}
-
-.book-stats {
-    color: var(--muted);
-    font-size: 0.9em;
-    margin-bottom: 16px;
-    padding-left: 4px;
-}
-
-/* ---------- Карточки ---------- */
-.book-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 20px;
-    margin-top: 20px;
-}
-
-.book-card {
-    background-color: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 12px 0 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    box-shadow: 0 4px 10px var(--card-shadow);
-    font-family: var(--font-interface);
-    transition: transform 0.2s;
-}
-
-.book-card:hover {
-    transform: translateY(-4px);
-}
-
-.book-cover-wrap {
-    width: 100%;
-    border-radius: 8px;
-    overflow: hidden;
-    margin-bottom: 12px;
-    aspect-ratio: 2 / 3;
-    cursor: pointer;
-}
-
-.book-cover {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-}
-
-.book-title {
-    color: var(--accent);
-    font-weight: 700;
-    font-size: 1.1em;
-    text-align: center;
-    line-height: 1.3;
-    margin-bottom: 6px;
-}
-
-.book-author {
-    color: var(--muted);
-    font-size: 0.9em;
-    text-align: center;
-    margin-bottom: 12px;
-}
-
-.book-rating {
-    color: var(--accent);
-    font-size: 1.2em;
-    margin-bottom: 16px;
-    letter-spacing: 2px;
-}
-
-.book-date {
-    color: var(--muted);
-    font-size: 0.8em;
-    text-align: center;
-    margin-bottom: 12px;
-}
-
-.book-open-btn {
-    width: calc(100% + 24px);
-    margin: auto -12px 0 -12px; /* прижимаем к низу карточки */
-    background-color: var(--bg-input);
-    color: var(--muted) !important;
-    text-align: center;
-    padding: 12px 0;
-    text-decoration: none;
-    font-weight: 600;
-    border-radius: 0 0 12px 12px;
-    transition: background 0.2s, color 0.2s;
-    cursor: pointer;
-}
-
-.book-open-btn:hover {
-    background-color: var(--bg-hover);
-    color: var(--accent) !important;
-    text-decoration: none;
-}
-
-/* ---------- Таблица ---------- */
-.book-table-container {
-    width: 100% !important;
-    max-width: 100% !important;
-    overflow-x: auto;
-    box-sizing: border-box;
-}
-
-.book-table {
-    width: 100% !important;
-    min-width: 100% !important;
-    table-layout: auto;
-    border-collapse: collapse;
-    margin-top: 10px;
-    color: var(--muted);
-    text-align: left;
-    font-size: 0.95em;
-    box-sizing: border-box;
-}
-
-.book-table th {
-    padding: 14px 12px;
-    color: var(--accent);
-    font-weight: 600;
-    white-space: nowrap;
-}
-
-.book-table td {
-    padding: 12px;
-    vertical-align: middle;
-}
-
-.book-table tr:hover {
-    background-color: var(--bg-row-hover);
-}
-
-/* колонка «Обложка» — под миниатюру, «Название» — основное место */
-.book-table th:nth-child(1),
-.book-table td:nth-child(1) {
-    width: 60px;
-    text-align: center;
-}
-
-.book-table th:nth-child(2),
-.book-table td:nth-child(2) {
-    width: 35%;
-}
-
-.table-cover {
-    width: 45px;
-    height: 65px;
-    object-fit: cover;
-    border-radius: 4px;
-    display: inline-block;
-}
-
-.book-table-tag {
-    display: inline-block;
-    padding: 2px 6px;
-    margin: 2px;
-    border-radius: 4px;
-    background-color: var(--bg-input);
-    color: var(--accent);
-    font-size: 0.85em;
-    border: 1px solid var(--border-input);
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background 0.2s, color 0.2s, border-color 0.2s;
-}
-
-.book-table-tag:hover {
-    background-color: var(--bg-hover);
-    border-color: var(--accent);
-}
-
-/* тег, по которому сейчас включён фильтр */
-.book-table-tag.is-active {
-    background-color: var(--accent);
-    color: var(--bg-card);
-    border-color: var(--accent);
-}
-
-/* ---------- Звёзды ---------- */
-.star-full,
-.star-half,
-.star-empty {
-    display: inline-block;
-    line-height: 1;
-}
-
-.star-full {
-    color: var(--star-on);
-}
-
-.star-empty {
-    color: var(--star-off);
-}
-
-/* Половина звезды через градиент символа ★ */
-.star-half {
-    background: linear-gradient(90deg, var(--star-on) 50%, var(--star-off) 50%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    vertical-align: middle;
-}
-`;
-
+// ---------- СТИЛИ (читаются из CSS-файла рядом со скриптом) ----------
 const STYLE_ID = "book-gallery-styles";
 
+// Возвращает текст ошибки или null
 async function injectStyles() {
-    let css = BOOK_CSS;
-    if (cfg.cssPath) {
-        try {
-            css = await app.vault.adapter.read(cfg.cssPath);
-        } catch (e) {
-            console.warn("book-gallery: не удалось прочитать cssPath, используются встроенные стили", e);
-        }
+    let css = "";
+    let error = null;
+    try {
+        css = await app.vault.adapter.read(cfg.cssPath);
+    } catch (e) {
+        error = `Не найден файл стилей «${cfg.cssPath}». Положите view.css рядом со скриптом или укажите путь параметром cssPath.`;
+        console.warn("book-gallery:", error, e);
     }
     let style = document.getElementById(STYLE_ID);
     if (!style) {
@@ -346,7 +54,49 @@ async function injectStyles() {
         style.id = STYLE_ID;
         document.head.appendChild(style);
     }
-    style.textContent = css; // перезаписываем, чтобы правки применялись при перерисовке
+    style.textContent = css; // перезаписываем, чтобы правки CSS применялись при перерисовке
+    return error;
+}
+
+// Добавляет заметке классы ширины так же, как это делает cssclasses во frontmatter,
+// и убирает их, когда блок выгружается (переход на другую заметку, перерисовка)
+function applyFullWidth(container) {
+    if (!cfg.fullWidth) return;
+
+    const classes = toArrayOfStrings(cfg.fullWidthClasses);
+    if (!classes.length) return;
+
+    container.classList.add("book-gallery-root");
+
+    let host = null;
+    let added = [];
+    let tries = 0;
+
+    const attach = () => {
+        host = container.closest(".markdown-preview-view, .markdown-source-view");
+        if (host) {
+            added = classes.filter((c) => !host.classList.contains(c));
+            host.classList.add(...added);
+        } else if (tries++ < 60) {
+            // в режиме чтения блок бывает ещё не вставлен в страницу — повторяем
+            requestAnimationFrame(attach);
+        }
+    };
+    attach();
+
+    dv.component?.register(() => {
+        // небольшая задержка: при перерисовке новый блок успеет вставиться
+        setTimeout(() => {
+            if (host && !host.querySelector(".book-gallery-root")) {
+                host.classList.remove(...added);
+            }
+        }, 0);
+    });
+}
+
+function toArrayOfStrings(v) {
+    if (!v) return [];
+    return (Array.isArray(v) ? v : [v]).map(String).filter(Boolean);
 }
 
 // ---------- 2. УТИЛИТЫ ----------
@@ -470,7 +220,8 @@ const unique = (key) =>
     Array.from(new Set(books.flatMap((b) => b[key]))).sort((a, b) => a.localeCompare(b, "ru"));
 
 // ---------- 4. ИНТЕРФЕЙС ----------
-await injectStyles();
+const cssError = await injectStyles();
+applyFullWidth(dv.container);
 
 const container = dv.container;
 container.innerHTML = "";
@@ -524,6 +275,10 @@ controls.append(searchInput, filtersRow);
 const statsDiv = el("div", "book-stats");
 const gridDiv = el("div");
 container.append(controls, statsDiv, gridDiv);
+if (cssError) {
+    // стили не загрузились, поэтому оформляем сообщение inline
+    container.prepend(el("div", "", { textContent: cssError, style: "color:#d9534f;margin-bottom:12px;" }));
+}
 
 // ---------- 5. ОТРИСОВКА ----------
 const cardsHtml = (list) =>

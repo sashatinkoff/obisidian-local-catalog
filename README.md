@@ -26,12 +26,12 @@
 ## Требования
 
 - Плагин **Dataview** с включённой настройкой **Enable JavaScript Queries**.
-- Папка `book-gallery` с файлами `view.js` и `view.css` внутри хранилища, например `scripts/book-gallery/`.
-  Отдельный CSS-сниппет в настройках внешнего вида не нужен: Dataview сам подхватывает `view.css` из этой папки.
+- Файлы `view.js` и `view.css` в одной папке внутри хранилища, например `scripts/book-gallery/`.
+  Скрипт сам читает `view.css` и подключает стили, включать CSS-сниппет в настройках внешнего вида не нужно.
 
 ## Установка
 
-1. Скопируйте папку `book-gallery` (в ней `view.js` и `view.css`) в `scripts/` хранилища. Путь можно выбрать любой, но имена файлов должны остаться `view.js` и `view.css`.
+1. Скопируйте папку `book-gallery` (в ней `view.js` и `view.css`) в `scripts/` хранилища. Если положите её в другое место, укажите путь к CSS параметром `cssPath` (см. ниже).
 2. Создайте заметку-каталог и вставьте в неё блок:
 
 ````markdown
@@ -40,30 +40,20 @@ await dv.view("scripts/book-gallery", { folder: "Прочитанные книг
 ```
 ````
 
-В `dv.view` указывается путь к **папке** (без имени файла), относительно корня хранилища. Dataview загружает из неё `view.js` и, если он есть, `view.css`.
+В `dv.view` указывается путь к **папке** (без имени файла), относительно корня хранилища. Dataview загружает из неё `view.js`, а `view.css` скрипт читает сам по пути из `cssPath`.
 
 ### Галерея на всю ширину (по желанию)
 
-Чтобы каталог занимал всю ширину экрана, добавьте во frontmatter заметки классы `max` и `full-width` и подключите второй сниппет `full-width.css`:
+Чтобы каталог занимал всю ширину экрана, добавьте параметр `fullWidth`. Классы во frontmatter заметки и отдельный сниппет не нужны:
 
-```css
-.full-width {
-    --file-line-width: 100%;
-}
-
-.full-width .markdown-source-view.is-readable-line-width .cm-sizer,
-.full-width .markdown-preview-view.is-readable-line-width .markdown-preview-sizer {
-    max-width: 100% !important;
-}
+```dataviewjs
+await dv.view("scripts/book-gallery", {
+    folder: "Прочитанные книги",
+    fullWidth: true
+})
 ```
 
-```yaml
----
-cssclasses:
-  - max
-  - full-width
----
-```
+Скрипт добавляет заметке те же классы, что и `cssclasses` (по умолчанию `max` и `full-width`), а когда вы переходите на другую заметку, убирает их. Стили для `full-width` лежат в `view.css`. Если вам нужны другие классы, задайте их параметром `fullWidthClasses`, например `fullWidthClasses: ["full-width"]`.
 
 ## Формат заметок о книгах
 
@@ -119,7 +109,10 @@ await dv.view("scripts/book-gallery", {
     defaultView: "cards",
     defaultSort: "date_desc",
     storageKey: "obsidian-book-gallery-view",
-    searchDebounce: 150
+    searchDebounce: 150,
+    fullWidth: false,
+    fullWidthClasses: ["max", "full-width"],
+    cssPath: "scripts/book-gallery/view.css"
 })
 ```
 
@@ -136,6 +129,9 @@ await dv.view("scripts/book-gallery", {
 | `defaultSort` | `date_desc`, `date_asc`, `title_asc`, `title_desc` |
 | `storageKey` | Ключ, под которым запоминается выбранный вид |
 | `searchDebounce` | Задержка поиска при вводе, мс |
+| `fullWidth` | `true` — растянуть заметку на всю ширину экрана (замена `cssclasses` во frontmatter) |
+| `fullWidthClasses` | Классы, которые добавляются заметке при `fullWidth: true`. По умолчанию `["max", "full-width"]` |
+| `cssPath` | Путь к CSS-файлу от корня хранилища. По умолчанию `"scripts/book-gallery/view.css"`. Если папка лежит в другом месте, задайте путь сами |
 
 ### Несколько каталогов
 
@@ -174,7 +170,8 @@ body.theme-dark {
 
 ## Если что-то не работает
 
-- **Ничего не отображается.** Проверьте, что в Dataview включено **Enable JavaScript Queries** и путь в `dv.view` ведёт к папке, где лежат `view.js` и `view.css` (от корня хранилища, без имени файла).
+- **Ничего не отображается.** Проверьте, что в Dataview включено **Enable JavaScript Queries** и путь в `dv.view` ведёт к папке, где лежит `view.js` (от корня хранилища, без имени файла).
+- **Над галереей красное сообщение «Не найден файл стилей».** Скрипт не нашёл `view.css` по пути из `cssPath`. Проверьте путь или передайте его параметром.
 - **Список пустой.** Проверьте `folder` и `filterField`. Если у заметок нет свойства `Прочитано: true`, задайте `filterField: null`.
 - **Нет обложек.** Файл обложки должен быть в хранилище, а в `cover` должна быть ссылка вида `"[[файл.jpg]]"`, путь или URL. В YAML вики-ссылку нужно заключать в кавычки.
 - **Правки скрипта не видны.** Dataview не перерисовывает блок при изменении `view.js` или `view.css`. Переключитесь на другую заметку и вернитесь или перезапустите Obsidian.
@@ -186,6 +183,5 @@ body.theme-dark {
 | Файл | Назначение |
 |---|---|
 | `book-gallery/view.js` | Скрипт для `dv.view` |
-| `book-gallery/view.css` | Оформление, подгружается Dataview вместе со скриптом |
-| `full-width.css` | Необязательный сниппет для ширины на весь экран |
+| `book-gallery/view.css` | Оформление и стили ширины, подключается скриптом |
 | `img/cards.png`, `img/table.png` | Скриншоты для README |
