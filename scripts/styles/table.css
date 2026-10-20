@@ -1,0 +1,82 @@
+/* ---------- Таблица ---------- */
+.book-table-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto;
+    box-sizing: border-box;
+}
+
+.book-table {
+    width: 100% !important;
+    min-width: 100% !important;
+    table-layout: auto;
+    border-collapse: collapse;
+    margin-top: 10px;
+    color: var(--muted);
+    text-align: left;
+    font-size: 0.95em;
+    box-sizing: border-box;
+}
+
+.book-table th {
+    padding: 14px 12px;
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.book-table td {
+    padding: 12px;
+    vertical-align: middle;
+}
+
+.book-table tr:hover {
+    background-color: var(--bg-row-hover);
+}
+
+/* колонка «Обложка» — под миниатюру, «Название» — основное место */
+.book-table th:nth-child(1),
+.book-table td:nth-child(1) {
+    width: 60px;
+    text-align: center;
+}
+
+.book-table th:nth-child(2),
+.book-table td:nth-child(2) {
+    width: 35%;
+}
+
+.table-cover {
+    width: 45px;
+    height: 65px;
+    object-fit: cover;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+.book-table-tag {
+    display: inline-block;
+    padding: 2px 6px;
+    margin: 2px;
+    border-radius: 4px;
+    background-color: var(--bg-input);
+    color: var(--accent);
+    font-size: 0.85em;
+    border: 1px solid var(--border-input);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.book-table-tag:hover {
+    background-color: var(--bg-hover);
+    border-color: var(--accent);
+}
+
+/* тег, по которому сейчас включён фильтр */
+.book-table-tag.is-active {
+    background-color: var(--accent);
+    color: var(--bg-card);
+    border-color: var(--accent);
+}
+

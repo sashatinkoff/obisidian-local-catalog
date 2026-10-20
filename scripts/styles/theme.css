@@ -1,0 +1,33 @@
+/* Цвета в одном месте: меняйте здесь.
+   Obsidian ставит на body класс theme-dark или theme-light,
+   поэтому для каждой темы своя палитра. */
+body.theme-dark {
+    --bg-card: #22272a;
+    --bg-input: #2e3438;
+    --bg-hover: #3a4247;
+    --bg-row-hover: #2a3034;
+    --border: #333a3e;
+    --border-input: #3e464b;
+    --accent: #c9a971;
+    --muted: #8a9297;
+    --star-on: #c9a971;
+    --star-off: #3e464b;
+    --text-hover: #ffffff;
+    --card-shadow: rgba(0, 0, 0, 0.3);
+}
+
+body.theme-light {
+    --bg-card: #f6f3ec;
+    --bg-input: #ebe7dc;
+    --bg-hover: #ded9cb;
+    --bg-row-hover: #efebe1;
+    --border: #d9d4c7;
+    --border-input: #cfc9ba;
+    --accent: #8a6a2f;
+    --muted: #6b7378;
+    --star-on: #c9a24d;
+    --star-off: #d5cfc0;
+    --text-hover: #1f2326;
+    --card-shadow: rgba(0, 0, 0, 0.12);
+}
+

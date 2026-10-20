@@ -1,0 +1,63 @@
+/* ---------- Панель управления ---------- */
+.book-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 15px;
+    background-color: var(--bg-card);
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.book-filters-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.book-search-input,
+.book-select,
+.book-view-btn {
+    height: auto !important; /* отменяем жёсткую высоту Obsidian */
+    padding: 14px 20px;
+    border-radius: 8px;
+    background-color: var(--bg-input);
+    border: 1px solid var(--border-input);
+    font-size: 1.1em;
+    box-sizing: border-box;
+}
+
+.book-search-input {
+    width: 100%;
+    color: var(--accent);
+    line-height: 1.5;
+}
+
+.book-select {
+    flex: 1;
+    min-width: 200px;
+    color: var(--muted);
+    line-height: 1.5;
+    cursor: pointer;
+}
+
+.book-view-btn {
+    color: var(--accent);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.book-view-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-hover);
+}
+
+.book-stats {
+    color: var(--muted);
+    font-size: 0.9em;
+    margin-bottom: 16px;
+    padding-left: 4px;
+}
+
