@@ -1,0 +1,60 @@
+/* ---------- Заголовок страницы ---------- */
+
+.bg-root .bg-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 16px;
+}
+
+.bg-root .bg-title {
+    font-size: 32px;
+    line-height: 1.15;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--bg-title);
+}
+
+.bg-root .bg-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+}
+
+.bg-root .bg-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--bg-border);
+    color: var(--bg-text-2);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.bg-root .bg-count .bg-ico {
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-count b {
+    color: var(--bg-text);
+    font-weight: 600;
+}
+
+@container (max-width: 640px) {
+    .bg-root .bg-title {
+        font-size: 26px;
+    }
+
+    .bg-root .bg-count {
+        display: none;
+    }
+
+    .bg-root .bg-btn--primary {
+        padding: 8px 12px;
+    }
+}

@@ -44,4 +44,28 @@ const toMillis = (d) => {
     return Number.isNaN(t) ? 0 : t;
 };
 
-return { esc, el, toArray, toStringList, itemToString, splitList, toMillis };
+// Число из значения свойства («4,5», 4.5, "12") или null
+const toNumber = (v) => {
+    if (v === undefined || v === null || v === "") return null;
+    const n = parseFloat(String(v).replace(",", "."));
+    return Number.isNaN(n) ? null : n;
+};
+
+// Склонение: plural(5, ["книга", "книги", "книг"]) -> "книг"
+const plural = (n, forms) => {
+    const a = Math.abs(n) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) return forms[2];
+    if (b > 1 && b < 5) return forms[1];
+    if (b === 1) return forms[0];
+    return forms[2];
+};
+
+// 1920 -> "1 920" (с неразрывным пробелом)
+const fmtInt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0");
+
+// Безопасный url(...) для inline-стиля
+const cssUrl = (u) =>
+    `url('${String(u).replace(/['"()\\\s]/g, (c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))}')`;
+
+return { esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl };

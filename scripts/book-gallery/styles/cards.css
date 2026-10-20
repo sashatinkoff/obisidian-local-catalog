@@ -1,0 +1,511 @@
+/* ---------- Сетка карточек ---------- */
+
+.bg-root .bg-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+    align-items: stretch;
+}
+
+.bg-root .bg-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--bg-border);
+    box-shadow: var(--bg-shadow);
+    cursor: pointer;
+    transition: transform 0.2s, border-color 0.2s;
+}
+
+.bg-root .bg-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--bg-accent-line);
+}
+
+/* ---------- Обложка: сама картинка поверх размытой копии ---------- */
+.bg-root .bg-cover {
+    position: relative;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 3 / 4;
+    overflow: hidden;
+    isolation: isolate;
+    border-radius: 12px;
+    background: var(--bg-chip);
+    cursor: pointer;
+}
+
+.bg-root .bg-cover::before {
+    content: "";
+    position: absolute;
+    inset: -24px;
+    z-index: -1;
+    background-image: var(--cover);
+    background-size: cover;
+    background-position: center;
+    filter: blur(18px) brightness(0.55) saturate(1.2);
+}
+
+.bg-root .bg-cover-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0 !important;
+    object-fit: contain;
+    display: block;
+}
+
+.bg-root .bg-score {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    background: var(--bg-badge);
+    color: var(--bg-badge-text);
+    font-size: 13px;
+    font-weight: 600;
+    backdrop-filter: blur(6px);
+}
+
+.bg-root .bg-score .bg-ico {
+    font-size: 16px;
+}
+
+.bg-root .bg-cover-tag {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    max-width: calc(100% - 20px);
+    padding: 3px 10px;
+    border-radius: 8px;
+    background: var(--bg-badge);
+    color: var(--bg-text);
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    backdrop-filter: blur(6px);
+}
+
+/* Нет обложки: плашка с названием и автором */
+.bg-root .bg-ph {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 14px;
+    text-align: center;
+    color: var(--bg-accent);
+    font-size: 26px;
+    background: linear-gradient(135deg, var(--bg-accent-soft), transparent 75%), var(--bg-chip);
+}
+
+.bg-root .bg-ph-title {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--bg-text);
+}
+
+.bg-root .bg-ph-author {
+    font-size: 12px;
+    color: var(--bg-text-2);
+}
+
+/* ---------- Текст карточки ---------- */
+.bg-root .bg-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 0 4px;
+    min-width: 0;
+}
+
+.bg-root .bg-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+}
+
+.bg-root .bg-genre {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--bg-accent);
+    font-size: 12.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bg-root .bg-genre .bg-ico {
+    font-size: 16px;
+}
+
+.bg-root .bg-date {
+    flex: none;
+    color: var(--bg-text-2);
+    font-size: 12px;
+}
+
+.bg-root .bg-card-title {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--bg-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.bg-root .bg-card-title--lg {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    -webkit-line-clamp: 3;
+}
+
+.bg-root .bg-card-author {
+    font-size: 14px;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-quote {
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--bg-border);
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-quote-text {
+    font-style: italic;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.bg-root .bg-quote-cap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-quote-cap .bg-ico {
+    color: var(--bg-accent);
+    font-size: 15px;
+}
+
+.bg-root .bg-quote--big {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+}
+
+.bg-root .bg-quote--big .bg-quote-cap {
+    margin-bottom: 0;
+}
+
+.bg-root .bg-reroll {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    margin-left: auto;
+    border-radius: 6px;
+    color: var(--bg-text-3);
+    transition: background 0.15s, color 0.15s;
+}
+
+.bg-root .bg-reroll:hover:not(:disabled) {
+    background: var(--bg-accent-soft);
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-reroll:disabled {
+    opacity: 0.5;
+    cursor: progress;
+}
+
+.bg-root .bg-note-comment {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--bg-text-3);
+}
+
+.bg-root .bg-note-comment[hidden] {
+    display: none;
+}
+
+.bg-root .bg-note-comment .bg-ico {
+    margin-top: 2px;
+    font-size: 14px;
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-card-stats {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--bg-surface-2);
+    font-size: 12px;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-dot {
+    font-style: normal;
+    opacity: 0.6;
+}
+
+.bg-root .bg-label-text {
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-label-text--danger {
+    color: var(--bg-danger);
+}
+
+/* Кнопка «[[Заметка]]» всегда прижата к низу карточки */
+.bg-root .bg-note-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: auto;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: var(--bg-chip) !important;
+    color: var(--bg-text-2);
+    font-size: 13px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.bg-root .bg-note-btn:hover {
+    background: var(--bg-accent-soft) !important;
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-note-btn--accent {
+    margin-top: 0;
+    background: var(--bg-accent-bg) !important;
+    color: var(--bg-accent-ink) !important;
+    font-weight: 600;
+}
+
+.bg-root .bg-note-btn--accent:hover {
+    filter: brightness(1.06);
+}
+
+/* ---------- Главная карточка («Книга года») ---------- */
+.bg-root .bg-card--featured {
+    grid-column: span 2;
+    display: grid;
+    grid-template-columns: minmax(150px, 38%) minmax(0, 1fr);
+    gap: 22px;
+    padding: 18px;
+    min-height: 460px;
+    background: radial-gradient(circle at 100% 100%, var(--bg-glow), transparent 55%), var(--bg-surface);
+}
+
+.bg-root .bg-card--featured .bg-cover {
+    aspect-ratio: 2 / 3;
+    align-self: start;
+}
+
+.bg-root .bg-card--featured .bg-card-body {
+    gap: 8px;
+    padding: 0;
+}
+
+.bg-root .bg-card--featured .bg-quote-text {
+    -webkit-line-clamp: 7;
+}
+
+.bg-root .bg-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.bg-root .bg-meta-k {
+    font-size: 11px;
+    color: var(--bg-text-3);
+}
+
+.bg-root .bg-meta-v {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--bg-text);
+}
+
+.bg-root .bg-meta-v--accent {
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: auto;
+    padding-top: 12px;
+}
+
+.bg-root .bg-tags-plain {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.bg-root .bg-tag-plain {
+    padding: 3px 10px;
+    border-radius: 6px;
+    background: var(--bg-chip);
+    color: var(--bg-text-2);
+    font-size: 12px;
+}
+
+/* ---------- «Разочарование»: горизонтальная карточка ---------- */
+.bg-root .bg-card--low {
+    grid-column: span 2;
+    align-self: start;
+    display: grid;
+    grid-template-columns: 170px minmax(0, 1fr);
+    gap: 18px;
+    padding: 14px;
+    border-color: var(--bg-danger-line);
+}
+
+.bg-root .bg-card--low:hover {
+    border-color: var(--bg-danger);
+}
+
+.bg-root .bg-card--low .bg-cover {
+    aspect-ratio: 2 / 3;
+    align-self: start;
+}
+
+.bg-root .bg-card--low .bg-quote-text {
+    -webkit-line-clamp: 5;
+}
+
+.bg-root .bg-card--low .bg-card-body {
+    padding: 0;
+    gap: 8px;
+}
+
+.bg-root .bg-card--low .bg-card-foot {
+    padding-top: 4px;
+    justify-content: space-between;
+}
+
+.bg-root .bg-card--low .bg-note-btn {
+    margin-top: 0;
+}
+
+.bg-root .bg-cover-flag {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--bg-danger-soft);
+    border: 1px solid var(--bg-danger-line);
+    color: var(--bg-danger);
+    backdrop-filter: blur(6px);
+}
+
+/* ---------- Узкий блок (телефон): две колонки, без кнопок ---------- */
+@container (max-width: 640px) {
+    .bg-root .bg-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+    }
+
+    .bg-root .bg-card {
+        padding: 10px;
+        gap: 10px;
+    }
+
+    .bg-root .bg-cover {
+        aspect-ratio: 3 / 4;
+    }
+
+    .bg-root .bg-card-title {
+        font-size: 15px;
+    }
+
+    .bg-root .bg-card:not(.bg-card--featured):not(.bg-card--low) .bg-note-btn,
+    .bg-root .bg-card:not(.bg-card--featured):not(.bg-card--low) .bg-quote,
+    .bg-root .bg-card:not(.bg-card--featured):not(.bg-card--low) .bg-genre {
+        display: none;
+    }
+
+    .bg-root .bg-card--featured,
+    .bg-root .bg-card--low {
+        grid-column: 1 / -1;
+        min-height: 0;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 12px;
+    }
+
+    .bg-root .bg-card--featured .bg-card-title--lg,
+    .bg-root .bg-card--low .bg-card-title--lg {
+        font-size: 19px;
+    }
+
+    .bg-root .bg-card-stats .bg-label-text,
+    .bg-root .bg-card-stats .bg-dot {
+        display: none;
+    }
+
+    .bg-root .bg-card--featured .bg-meta,
+    .bg-root .bg-card--featured .bg-card-foot,
+    .bg-root .bg-card--low .bg-note-btn {
+        display: none;
+    }
+
+    .bg-root .bg-badge {
+        font-size: 10px;
+        padding: 3px 8px;
+    }
+}
