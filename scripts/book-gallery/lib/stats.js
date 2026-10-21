@@ -54,6 +54,39 @@ function compute(books) {
     };
 }
 
+// Годы, в которые есть прочитанные книги (по убыванию)
+const years = (books) =>
+    [...new Set(books.filter((b) => b.dateMs).map((b) => new Date(b.dateMs).getFullYear()))].sort((a, b) => b - a);
+
+// «Пульс» года: книги, страницы и средняя оценка по месяцам
+function pulse(books, year) {
+    const months = Array.from({ length: 12 }, (_, m) => ({ m, count: 0, pages: 0, scoreSum: 0, scored: 0 }));
+    books
+        .filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year)
+        .forEach((b) => {
+            const mm = months[new Date(b.dateMs).getMonth()];
+            mm.count++;
+            mm.pages += b.pages || 0;
+            if (b.score5 !== null) {
+                mm.scoreSum += b.score5;
+                mm.scored++;
+            }
+        });
+    const total = months.reduce((s, x) => s + x.count, 0);
+    const scored = months.reduce((s, x) => s + x.scored, 0);
+    const max = Math.max(0, ...months.map((x) => x.count));
+    return {
+        year,
+        months,
+        total,
+        max,
+        pages: months.reduce((s, x) => s + x.pages, 0) || null,
+        avg: scored ? months.reduce((s, x) => s + x.scoreSum, 0) / scored : null,
+        bestMonth: max ? months.find((x) => x.count === max).m : null,
+        years: years(books),
+    };
+}
+
 // Книга для «инсайта месяца»: лучшая по оценке книга месяца, у которой есть заметки или цитата;
 // если таких нет — лучшая среди всех. Сам текст выбирает случайно lib/notes.js
 function insight(books, stats) {
@@ -65,4 +98,4 @@ function insight(books, stats) {
     return book ? { book } : null;
 }
 
-return { compute, insight };
+return { compute, insight, pulse, years };

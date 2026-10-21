@@ -1,9 +1,11 @@
-// lib/notes.js — заметки и цитаты книги: поиск, чтение файла, случайный выбор.
+// lib/notes.js — тексты для карточек: заметки и цитаты книги, отрывок из заметки самой книги.
 //
-// Заметка-цитата — отдельный файл, у которого в свойстве `Источник` указана книга
-// (название или ссылка). Кроме того, заметками считаются ссылки из свойства книги `Заметки`.
-// Текст заметки: первая строка-метка («Note», «Цитата») отбрасывается, первый абзац — цитата,
-// всё остальное — ваш комментарий. Читаются только файлы, выбранные для показа.
+// Источники текста по приоритету:
+//   1. случайная заметка-цитата книги (файл со свойством `Источник` или ссылка из свойства `Заметки`);
+//   2. свойство книги `Цитата`;
+//   3. отрывок из текста самой заметки книги (первые абзацы без служебной разметки).
+// Файлы читаются заранее (preload) ограниченным числом потоков, чтобы раскладка знала, сколько
+// текста у каждой книги: книги с небольшим текстом не получают большую карточку.
 
 const { cfg, dv, app } = ctx;
 const U = ctx.lib.utils;
@@ -11,6 +13,7 @@ const U = ctx.lib.utils;
 const booksByPath = new Map();  // путь книги -> книга
 const parsedCache = new Map();  // путь заметки -> { quote, comment } | null
 const picked = new Map();       // путь книги -> { note, quote, comment }
+const excerpts = new Map();     // путь книги -> текст отрывка ("" — отрывка нет)
 
 const stripLink = (s) => String(s).replace(/^\[\[|\]\]$/g, "").split("|")[0].split("#")[0].trim();
 const baseName = (s) => String(s).split("/").pop().replace(/\.md$/i, "").toLowerCase();
@@ -18,6 +21,7 @@ const baseName = (s) => String(s).split("/").pop().replace(/\.md$/i, "").toLower
 // ---------- индекс: какие заметки относятся к каким книгам ----------
 function buildIndex(books) {
     booksByPath.clear();
+    picked.clear();
     const lookup = new Map();
     books.forEach((b) => {
         booksByPath.set(b.path, b);
@@ -55,11 +59,13 @@ function buildIndex(books) {
     });
 }
 
-// ---------- разбор текста заметки ----------
+// ---------- разбор текста ----------
 function clean(s) {
     return String(s)
+        .replace(/\[![^\]]+\][+-]?/g, "")
         .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
         .replace(/\[\[([^\]]+)\]\]/g, "$1")
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
         .replace(/(\*\*|__|==|~~)/g, "")
         .replace(/^\s*>+\s?/gm, "")
         .replace(/\s+/g, " ")
@@ -68,6 +74,7 @@ function clean(s) {
 
 const LABEL = /^(#{1,6}\s*)?(note|quote|notes|цитата|заметка|заметки)\s*:?\s*$/i;
 
+// Заметка-цитата: первая строка-метка отбрасывается, первый абзац — цитата, остальное — комментарий
 function parse(raw) {
     const text = String(raw).replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
     const lines = text.split(/\r?\n/);
@@ -92,17 +99,61 @@ function parse(raw) {
     return quote ? { quote, comment: clean(blocks.slice(1).join(" ")) } : null;
 }
 
+// Отрывок из заметки книги: первые «живые» абзацы без заголовков, таблиц, встраиваний и кода
+function parseExcerpt(raw, max) {
+    let t = String(raw).replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
+    t = t
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/~~~[\s\S]*?~~~/g, "")
+        .replace(/%%[\s\S]*?%%/g, "")
+        .replace(/<!--[\s\S]*?-->/g, "");
+
+    const parts = [];
+    let len = 0;
+    for (const block of t.split(/\n\s*\n/)) {
+        const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+        if (!lines.length) continue;
+        if (/^(#{1,6}\s|\||!\[|<|>|-{3,}$|\*{3,}$|\^|\$\$)/.test(lines[0])) continue; // заголовки, таблицы, встраивания, callout и цитаты — не проза книги
+        const text = clean(
+            lines
+                .join(" ")
+                .replace(/!\[\[[^\]]*\]\]/g, "")
+                .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+                .replace(/(^|\s)#[\p{L}\d_/-]+/gu, " ")
+        );
+        if (text.length < 25) continue;
+        parts.push(text);
+        len += text.length;
+        if (len >= max) break;
+    }
+    const joined = parts.join(" ");
+    if (!joined) return "";
+    return joined.length > max ? joined.slice(0, max).replace(/\s+\S*$/, "") + "…" : joined;
+}
+
+async function readFile(path) {
+    try {
+        const file = app.vault.getAbstractFileByPath(path);
+        return file ? await app.vault.cachedRead(file) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 async function readNote(note) {
     if (parsedCache.has(note.path)) return parsedCache.get(note.path);
-    let parsed = null;
-    try {
-        const file = app.vault.getAbstractFileByPath(note.path);
-        if (file) parsed = parse(await app.vault.cachedRead(file));
-    } catch (e) {
-        parsed = null;
-    }
+    const raw = await readFile(note.path);
+    const parsed = raw === null ? null : parse(raw);
     parsedCache.set(note.path, parsed);
     return parsed;
+}
+
+async function loadExcerpt(book) {
+    if (excerpts.has(book.path)) return excerpts.get(book.path);
+    const raw = cfg.showExcerpt ? await readFile(book.path) : null;
+    const text = raw === null ? "" : parseExcerpt(raw, cfg.excerptChars || 420);
+    excerpts.set(book.path, text);
+    return text;
 }
 
 // ---------- случайный выбор ----------
@@ -113,9 +164,6 @@ const shuffle = (arr) => {
     }
     return arr;
 };
-
-// Выбранная для книги заметка (если уже выбрана и прочитана), без ожидания
-const peek = (book) => picked.get(book.path) || null;
 
 // Выбрать случайную заметку; fresh — выбрать другую, чем сейчас
 async function pick(book, fresh) {
@@ -137,16 +185,56 @@ async function pick(book, fresh) {
     return null;
 }
 
-// Дочитать заметки для элементов с data-book и вызвать fill(элемент, результат)
+// Лучший из доступных сейчас текстов книги (без ожидания) или null
+function content(book) {
+    const r = picked.get(book.path);
+    if (r) return { quote: r.quote, comment: r.comment, path: r.note.path, name: r.note.name, source: "note" };
+    if (book.quote) return { quote: book.quote, comment: "", path: book.path, name: book.title, source: "property" };
+    const ex = excerpts.get(book.path);
+    if (ex) return { quote: ex, comment: "", path: book.path, name: book.title, source: "excerpt" };
+    return null;
+}
+
+// Сколько текста у книги: от этого зависит, можно ли дать ей большую карточку
+const textLength = (book) => {
+    const c = content(book);
+    return c ? c.quote.length + (c.comment || "").length : 0;
+};
+
+// Прочитать всё нужное для одной книги
+async function ensure(book) {
+    if (book.noteList.length && !picked.has(book.path)) await pick(book, false);
+    if (!content(book)) await loadExcerpt(book);
+}
+
+// Заранее прочитать тексты всех книг (до 8 файлов одновременно), но не дольше budgetMs
+async function preload(books, budgetMs) {
+    const work = books.filter((b) => b.noteList.length || (!b.quote && cfg.showExcerpt));
+    let next = 0;
+    const worker = async () => {
+        while (next < work.length) {
+            const book = work[next++];
+            try {
+                await ensure(book);
+            } catch (e) {
+                /* пропускаем книгу */
+            }
+        }
+    };
+    const all = Promise.all(Array.from({ length: Math.min(8, work.length) }, worker));
+    await Promise.race([all, new Promise((resolve) => setTimeout(resolve, budgetMs || 2500))]);
+}
+
+// Дочитать недостающие тексты для уже отрисованных элементов с data-book и вызвать fill(элемент, текст)
 async function hydrate(root, fill) {
     const nodes = [...root.querySelectorAll("[data-book]")];
     await Promise.all(
         nodes.map(async (el) => {
             const book = booksByPath.get(el.dataset.book);
-            if (!book || !book.noteList.length) return;
-            const had = picked.has(book.path);
-            const result = await pick(book, false);
-            if (result && !had && root.contains(el)) fill(el, result);
+            if (!book) return;
+            await ensure(book);
+            const c = content(book);
+            if (c && root.contains(el)) fill(el, c);
         })
     );
 }
@@ -156,4 +244,4 @@ async function reroll(bookPath) {
     return book ? pick(book, true) : null;
 }
 
-return { buildIndex, parse, peek, pick, hydrate, reroll };
+return { buildIndex, parse, parseExcerpt, content, textLength, pick, preload, hydrate, reroll };

@@ -4,6 +4,7 @@
 const { esc } = ctx.lib.utils;
 const { icon } = ctx.lib.icons;
 const { starsHtml, EMPTY_COVER } = ctx.lib.data;
+const Thumbs = ctx.lib.thumbs;
 
 const tagsHtml = (tags, selected) =>
     tags.length
@@ -19,7 +20,7 @@ function table(list, selectedTags) {
         .map(
             (b) => `
     <tr>
-        <td><img class="bg-thumb" src="${esc(b.cover || EMPTY_COVER)}" loading="lazy" alt=""></td>
+        <td>${b.cover ? Thumbs.imgTag(b.cover, "bg-thumb") : `<img class="bg-thumb" src="${esc(EMPTY_COVER)}" alt="">`}</td>
         <td><a class="internal-link bg-list-title" data-href="${esc(b.path)}" href="${esc(b.path)}">${esc(b.title)}</a></td>
         <td>${esc(b.authorText || "—")}</td>
         <td>${esc(b.genresText || "—")}</td>

@@ -64,8 +64,49 @@ const plural = (n, forms) => {
 // 1920 -> "1 920" (с неразрывным пробелом)
 const fmtInt = (n) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0");
 
+// Дата (мс) -> строка по формату в стиле Luxon: dd MMMM yyyy -> «07 сентября 2026».
+// Токены: yyyy yy MMMM MMM MM M dd d EEEE EEE. Текст в одинарных кавычках выводится как есть.
+// Привычные YYYY / YY / D из moment тоже понимаются.
+const DATE_TOKENS = /yyyy|yy|MMMM|MMM|MM|M|dd|d|EEEE|EEE/g;
+
+function formatDate(ms, fmt, locale) {
+    if (!ms) return "";
+    const d = new Date(ms);
+    const loc = locale || "ru";
+    const f = String(fmt || "dd MMMM yyyy").replace(/YYYY/g, "yyyy").replace(/YY/g, "yy").replace(/D/g, "d");
+    const hasDay = /d/.test(f.replace(/'[^']*'/g, ""));
+    const pad = (n) => String(n).padStart(2, "0");
+    const part = (opts, type) => {
+        try {
+            const p = new Intl.DateTimeFormat(loc, opts).formatToParts(d).find((x) => x.type === type);
+            return p ? p.value : "";
+        } catch (e) {
+            return "";
+        }
+    };
+    // с числом месяц склоняется («7 сентября»), без числа — именительный («сентябрь»)
+    const month = (style) => part(hasDay ? { day: "numeric", month: style } : { month: style }, "month");
+
+    const map = {
+        yyyy: () => String(d.getFullYear()),
+        yy: () => pad(d.getFullYear() % 100),
+        MMMM: () => month("long"),
+        MMM: () => month("short"),
+        MM: () => pad(d.getMonth() + 1),
+        M: () => String(d.getMonth() + 1),
+        dd: () => pad(d.getDate()),
+        d: () => String(d.getDate()),
+        EEEE: () => part({ weekday: "long" }, "weekday"),
+        EEE: () => part({ weekday: "short" }, "weekday"),
+    };
+    return f
+        .split(/('[^']*')/)
+        .map((seg) => (seg.startsWith("'") ? seg.slice(1, -1) : seg.replace(DATE_TOKENS, (t) => map[t]())))
+        .join("");
+}
+
 // Безопасный url(...) для inline-стиля
 const cssUrl = (u) =>
     `url('${String(u).replace(/['"()\\\s]/g, (c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))}')`;
 
-return { esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl };
+return { esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl, formatDate };

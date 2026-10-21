@@ -1,10 +1,10 @@
-// lib/templates.js — HTML заголовка, блока статистики и панели фильтров. Без логики событий.
+// lib/templates.js — HTML заголовка, блока статистики, «Пульса» года и панели фильтров.
+// Без логики событий: клики ловит ui.js по атрибутам data-action.
 
 const { cfg } = ctx;
-const { esc, fmtInt, plural } = ctx.lib.utils;
+const { esc, fmtInt, plural, formatDate } = ctx.lib.utils;
 const { icon } = ctx.lib.icons;
 const { SORTS } = ctx.lib.data;
-const { quoteText } = ctx.lib.cards;
 const Notes = ctx.lib.notes;
 
 // ---------- заголовок ----------
@@ -20,7 +20,7 @@ function header(total) {
 </header>`;
 }
 
-// ---------- статистика ----------
+// ---------- статистика месяца и инсайт ----------
 // Мини-график: нарастающий итог по дням месяца
 function sparkline(series) {
     const W = 220, H = 60, pad = 4;
@@ -75,21 +75,83 @@ function stats(s, insight) {
     let insightCard = "";
     if (insight) {
         const b = insight.book;
-        const r = Notes.peek(b);
-        const text = r ? r.quote : b.quote;
-        const target = r ? { path: r.note.path, name: r.note.name } : { path: b.path, name: b.title };
+        const c = Notes.content(b);
+        const text = c ? (c.source === "excerpt" ? c.quote : `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}»`) : "";
+        const target = c ? { path: c.path, name: c.name } : { path: b.path, name: b.title };
         insightCard = `
 <div class="bg-stat bg-stat--insight" data-book="${esc(b.path)}" data-role="insight">
     <div class="bg-stat-head">
         <span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon("quote")}</span>Инсайт месяца</span>
         <span class="bg-eyebrow-ico">${icon("link")}</span>
     </div>
-    <div class="bg-insight-text">${text ? esc(quoteText(text)) : "…"}</div>
-    <a class="bg-insight-link bg-mono" href="#" data-action="open" data-path="${esc(target.path)}">${icon("file")}<span>[[${esc(target.name)}]]</span></a>
+    <div class="bg-insight-text">${text ? esc(text) : "…"}</div>
+    <a class="bg-insight-link bg-mono" href="#" data-action="open" data-path="${esc(target.path)}">${icon("file")}<span>${esc(target.name)}</span></a>
 </div>`;
     }
 
     return `<section class="bg-stats">${monthCard}${insightCard}</section>`;
+}
+
+// ---------- «Пульс прочитанных за год» ----------
+const monthShort = (year, m) => {
+    try {
+        return new Intl.DateTimeFormat(cfg.dateLocale || "ru", { month: "long" }).format(new Date(year, m, 1)).slice(0, 3);
+    } catch (e) {
+        return String(m + 1);
+    }
+};
+
+const monthKey = (year, m) => `${year}-${String(m + 1).padStart(2, "0")}`;
+
+// data — результат Stats.pulse; selected — ключ выбранного месяца ("2026-09") или null
+function pulse(data, selected) {
+    if (!data || !data.years.length) return "";
+
+    const idx = data.years.indexOf(data.year);
+    const older = data.years[idx + 1];
+    const newer = data.years[idx - 1];
+    const yearBtn = (icoName, target, label) =>
+        `<button class="bg-year-btn" type="button" data-action="pulse-year" data-value="${target ?? ""}" aria-label="${label}"${target ? "" : " disabled"}>${icon(icoName)}</button>`;
+
+    const bars = data.months
+        .map((x) => {
+            const key = monthKey(data.year, x.m);
+            const h = x.count ? Math.max(8, Math.round((x.count / data.max) * 100)) : 3;
+            const full = formatDate(new Date(data.year, x.m, 1).getTime(), "MMMM yyyy", cfg.dateLocale);
+            const hint = `${full}: ${x.count} ${plural(x.count, ["книга", "книги", "книг"])}${x.pages ? `, ${fmtInt(x.pages)} стр` : ""}`;
+            return `
+<button class="bg-bar${selected === key ? " is-on" : ""}${x.count ? "" : " is-empty"}${x.count === data.max && x.count ? " is-peak" : ""}" type="button" data-action="pulse-month" data-value="${key}" title="${esc(hint)}">
+    <span class="bg-bar-val bg-mono">${x.count || ""}</span>
+    <span class="bg-bar-track"><span class="bg-bar-fill" style="height:${h}%"></span></span>
+    <span class="bg-bar-lbl bg-mono">${esc(monthShort(data.year, x.m))}</span>
+</button>`;
+        })
+        .join("");
+
+    const best = data.bestMonth !== null
+        ? `<div><div class="bg-meta-k bg-mono">Лучший месяц</div><div class="bg-meta-v">${esc(formatDate(new Date(data.year, data.bestMonth, 1).getTime(), "MMMM", cfg.dateLocale))} · ${data.max}</div></div>`
+        : "";
+    const sums = [
+        data.pages ? `<div><div class="bg-meta-k bg-mono">Страниц</div><div class="bg-meta-v bg-mono">${fmtInt(data.pages)}</div></div>` : "",
+        data.avg !== null ? `<div><div class="bg-meta-k bg-mono">Средняя оценка</div><div class="bg-meta-v bg-mono">${data.avg.toFixed(1)}${icon("star", "bg-ico--fill bg-star")}</div></div>` : "",
+        best,
+    ].join("");
+
+    return `
+<section class="bg-pulse">
+    <div class="bg-pulse-head">
+        <span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon("pulse")}</span>Пульс прочитанных за год</span>
+        <div class="bg-year bg-mono">${yearBtn("chevron-left", older, "Предыдущий год")}<span>${data.year}</span>${yearBtn("chevron-right", newer, "Следующий год")}</div>
+    </div>
+    <div class="bg-pulse-body">
+        <div class="bg-pulse-sum">
+            <div class="bg-stat-main"><span class="bg-stat-num">${data.total}</span><span class="bg-stat-unit">${plural(data.total, ["книга", "книги", "книг"])}</span></div>
+            <div class="bg-meta">${sums}</div>
+        </div>
+        <div class="bg-bars" role="group" aria-label="Книги по месяцам">${bars}</div>
+    </div>
+    <div class="bg-pulse-hint bg-mono">Нажмите на столбец, чтобы показать книги месяца</div>
+</section>`;
 }
 
 // ---------- панель фильтров ----------
@@ -99,7 +161,7 @@ const options = (values, allLabel) =>
 const select = (name, optionsHtml, icoName) =>
     `<div class="bg-select">${icoName ? icon(icoName, "bg-select-ico") : ""}<select data-filter="${name}">${optionsHtml}</select>${icon("chevron-down", "bg-select-arrow")}</div>`;
 
-function panel({ authors, genres, view }) {
+function panel({ authors, genres, view, tagsOpen }) {
     const sortOptions = Object.entries(SORTS)
         .map(([id, s]) => `<option value="${id}">Сортировка: ${esc(s.label)}</option>`)
         .join("");
@@ -119,7 +181,7 @@ function panel({ authors, genres, view }) {
                 <button type="button" class="bg-seg-btn${view === "cards" ? " is-on" : ""}" data-action="view" data-value="cards">${icon("grid")}<span>Карточки</span></button>
                 <button type="button" class="bg-seg-btn${view === "list" ? " is-on" : ""}" data-action="view" data-value="list">${icon("list")}<span>Список</span></button>
             </div>
-            <button type="button" class="bg-ghost bg-mono" data-action="reset">${icon("reset")}<span>Сбросить все</span></button>
+            <button type="button" class="bg-ghost bg-mono" data-action="reset" title="Сбросить все" aria-label="Сбросить все">${icon("reset")}<span>Сбросить все</span></button>
         </div>
     </div>
 
@@ -148,13 +210,17 @@ function panel({ authors, genres, view }) {
             <div class="bg-chips" data-zone="scores"></div>
         </div>
 
-        <div class="bg-field">
+        <div class="bg-field bg-field--tags${tagsOpen ? "" : " is-collapsed"}" data-zone="tagsfield">
             <div class="bg-label-row">
-                <div class="bg-label bg-mono">${icon("hash")}Теги заметок <span class="bg-pill bg-mono" data-zone="tagcount"></span></div>
+                <button type="button" class="bg-label bg-label--btn bg-mono" data-action="tags-toggle" aria-expanded="${tagsOpen ? "true" : "false"}">
+                    ${icon("chevron-up", "bg-fold")}${icon("hash")}Теги заметок <span class="bg-pill bg-mono" data-zone="tagcount"></span>
+                </button>
                 <span class="bg-hint bg-mono">Кликните для включения в фильтр</span>
             </div>
-            <div class="bg-chips" data-zone="tags"></div>
-            <input class="bg-tag-find bg-mono" type="text" placeholder="+ Найти тег..." data-filter="tagQuery">
+            <div class="bg-tags-body">
+                <div class="bg-chips" data-zone="tags"></div>
+                <input class="bg-tag-find bg-mono" type="text" placeholder="+ Найти тег..." data-filter="tagQuery">
+            </div>
         </div>
     </div>
 
@@ -191,6 +257,10 @@ const SCORE_LABELS = { "5": "5.0", "4": "4.0+", "3": "3.0+", low: "< 3.0" };
 function applied(st, list, total) {
     const chips = [];
     if (st.search.trim()) chips.push(`${icon("search")}«${esc(st.search.trim())}»`);
+    if (st.month) {
+        const [y, m] = st.month.split("-").map(Number);
+        chips.push(`${icon("pulse")}${esc(formatDate(new Date(y, m - 1, 1).getTime(), "MMMM yyyy", cfg.dateLocale))}`);
+    }
     if (st.tags.size) chips.push(`${icon("hash")}${esc([...st.tags].map((t) => t.replace(/^#/, "")).join(", "))}`);
     if (st.author !== "all") chips.push(`${icon("user")}${esc(st.author)}`);
     if (st.genre !== "all") chips.push(`${icon("shapes")}${esc(st.genre)}`);
@@ -207,4 +277,4 @@ function footer(total, ms) {
     return `<div class="bg-footer bg-mono">${icon("database")}Dataview: загружено ${total} ${plural(total, ["запись", "записи", "записей"])} за ${Math.max(1, Math.round(ms))} мс</div>`;
 }
 
-return { header, stats, panel, tagChips, scoreChips, applied, footer };
+return { header, stats, pulse, panel, tagChips, scoreChips, applied, footer, monthKey };

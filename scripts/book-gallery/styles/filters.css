@@ -287,6 +287,39 @@
     color: var(--bg-text-3);
 }
 
+/* Сворачиваемая панель тегов */
+.bg-root .bg-label--btn {
+    margin-left: -6px;
+    padding: 3px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.bg-root .bg-label--btn:hover {
+    background: var(--bg-accent-soft);
+    color: var(--bg-text);
+}
+
+.bg-root .bg-fold {
+    transition: transform 0.2s;
+}
+
+.bg-root .bg-field--tags.is-collapsed .bg-fold {
+    transform: rotate(180deg);
+}
+
+.bg-root .bg-tags-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bg-root .bg-field--tags.is-collapsed .bg-tags-body,
+.bg-root .bg-field--tags.is-collapsed .bg-hint {
+    display: none;
+}
+
 /* Подвал: применённые фильтры и число совпадений */
 .bg-root .bg-panel-foot {
     display: flex;
@@ -336,6 +369,10 @@
     }
 
     .bg-root .bg-panel-sub {
+        display: none;
+    }
+
+    .bg-root .bg-ghost span {
         display: none;
     }
 

@@ -1,6 +1,6 @@
 // lib/ui.js — сборка интерфейса, состояние, события и обновление списка.
 
-const { cfg, app } = ctx;
+const { cfg, app, dv } = ctx;
 const U = ctx.lib.utils;
 const { uniqueValues } = ctx.lib.data;
 const Stats = ctx.lib.stats;
@@ -9,6 +9,7 @@ const T = ctx.lib.templates;
 const Cards = ctx.lib.cards;
 const List = ctx.lib.list;
 const Notes = ctx.lib.notes;
+const Thumbs = ctx.lib.thumbs;
 
 const localDate = () => {
     const d = new Date();
@@ -16,7 +17,7 @@ const localDate = () => {
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
-// localStorage может быть недоступен (приватный режим, ограничения) — тогда просто не запоминаем вид
+// localStorage может быть недоступен (приватный режим, ограничения) — тогда просто не запоминаем выбор
 const store = {
     get: (k) => {
         try { return localStorage.getItem(k); } catch (e) { return null; }
@@ -30,6 +31,18 @@ const notify = (msg) => {
     if (typeof Notice !== "undefined") new Notice(msg);
     else console.warn("book-gallery:", msg);
 };
+
+// Число колонок бенто-сетки по ширине блока. Для уже выбранного числа колонок (prev) действует запас
+// в 48 px: когда из-за смены раскладки появляется или исчезает полоса прокрутки, ширина меняется
+// на ~15 px, и без запаса сетка бесконечно перестраивалась бы туда-сюда
+function colsFor(w, prev) {
+    if (!prev) return w >= 980 ? 4 : w >= 640 ? 3 : 2;
+    const MARGIN = 48;
+    let c = prev;
+    while (c < 4 && w >= (c === 2 ? 640 : 980) + MARGIN) c++;
+    while (c > 2 && w < (c === 4 ? 980 : 640) - MARGIN) c--;
+    return c;
+}
 
 // Создать пустую заметку о книге в cfg.folder и открыть её
 async function addBook() {
@@ -64,46 +77,78 @@ async function addBook() {
     }
 }
 
-function mount(container, books, opts) {
+async function mount(container, books, opts) {
     const loadMs = (opts && opts.loadMs) || 0;
-    container.innerHTML = "";
+
+    // Dataview может запустить блок повторно, пока предыдущий запуск ещё читает файлы
+    const token = {};
+    container.__bgToken = token;
+    container.innerHTML = '<div style="padding:24px;text-align:center;opacity:.6">Загрузка…</div>';
 
     const saved = store.get(cfg.storageKey);
     let view = saved === "list" || saved === "cards" ? saved : cfg.defaultView === "table" ? "list" : cfg.defaultView;
     if (view !== "list") view = "cards";
 
+    const tagsKey = cfg.storageKey + "-tags";
+    const savedTags = store.get(tagsKey);
+    let tagsOpen = savedTags === "open" ? true : savedTags === "closed" ? false : !cfg.tagsCollapsed;
+
     // заметки книг нужны до статистики: от них зависят счётчики и «инсайт месяца»
     Notes.buildIndex(books);
+    // тексты читаются заранее: по их объёму решается, какие книги получат большую карточку
+    await Notes.preload(books, 2500);
+    if (container.__bgToken !== token) return; // блок уже перезапущен
+    container.innerHTML = "";
 
     const state = Filters.createState();
     const allTags = uniqueValues(books, "tags");
     const stats = cfg.showStats ? Stats.compute(books) : null;
     const insight = cfg.showStats ? Stats.insight(books, stats) : null;
+    const years = Stats.years(books);
+    let pulseYear = years[0];
+
+    let timer; // задержка поиска
 
     const root = U.el("div", "bg-root");
     root.innerHTML =
         T.header(books.length) +
         T.stats(stats, insight) +
-        T.panel({ authors: uniqueValues(books, "authors"), genres: uniqueValues(books, "genres"), view }) +
+        `<div data-zone="pulse"></div>` +
+        T.panel({ authors: uniqueValues(books, "authors"), genres: uniqueValues(books, "genres"), view, tagsOpen }) +
         `<div class="bg-results" data-zone="results"></div>` +
         (cfg.showFooter ? T.footer(books.length, loadMs) : "");
     container.appendChild(root);
 
     const zone = (name) => root.querySelector(`[data-zone="${name}"]`);
     const zones = {
+        pulse: zone("pulse"),
         badge: zone("badge"),
         tagcount: zone("tagcount"),
         scores: zone("scores"),
         tags: zone("tags"),
+        tagsfield: zone("tagsfield"),
         applied: zone("applied"),
         results: zone("results"),
     };
-    const sortSelect = root.querySelector('[data-filter="sort"]');
-    sortSelect.value = state.sort;
+    root.querySelector('[data-filter="sort"]').value = state.sort;
+
+    let lastList = [];
+    let cols = 0;
 
     // ---------- отрисовка ----------
+    function renderPulse() {
+        zones.pulse.innerHTML = cfg.showPulse && years.length ? T.pulse(Stats.pulse(books, pulseYear), state.month) : "";
+    }
+
+    function renderResults() {
+        cols = colsFor(zones.results.clientWidth || root.clientWidth || 1000, cols);
+        zones.results.innerHTML = view === "cards" ? Cards.grid(lastList, cols) : List.table(lastList, state.tags);
+        Thumbs.hydrate(zones.results);              // уменьшенные обложки
+        Notes.hydrate(zones.results, Cards.fill);   // тексты, которые не успели прочитаться заранее
+    }
+
     function update() {
-        const list = Filters.apply(books, state);
+        lastList = Filters.apply(books, state);
 
         const active = Filters.activeCount(state);
         zones.badge.hidden = !active;
@@ -111,17 +156,42 @@ function mount(container, books, opts) {
         zones.tagcount.textContent = `${allTags.length} ${U.plural(allTags.length, ["тег", "тега", "тегов"])} · ${state.tags.size} выбрано`;
         zones.tags.innerHTML = T.tagChips(allTags, state.tags, state.tagQuery);
         zones.scores.innerHTML = T.scoreChips(Filters.scoreCounts(books), state.score);
-        zones.applied.innerHTML = T.applied(state, list, books.length);
-        zones.results.innerHTML = view === "cards" ? Cards.grid(list) : List.table(list, state.tags);
-
+        zones.applied.innerHTML = T.applied(state, lastList, books.length);
         root.querySelectorAll('[data-action="view"]').forEach((b) => b.classList.toggle("is-on", b.dataset.value === view));
 
-        // случайные заметки в больших карточках дочитываются из файлов уже после отрисовки
-        Notes.hydrate(zones.results, Cards.fill);
+        renderPulse();
+        renderResults();
     }
 
+    // Бенто-сетка пересчитывается, когда меняется число колонок (изменили ширину панели или окна)
+    const cleanups = [];
+    if (typeof ResizeObserver !== "undefined") {
+        let frame = 0;
+        const relayouts = []; // время последних перестроек: защита от бесконечного цикла
+        const observer = new ResizeObserver(() => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+                if (!root.isConnected) return observer.disconnect();
+                const next = colsFor(zones.results.clientWidth || root.clientWidth || 1000, cols);
+                if (view !== "cards" || next === cols) return;
+                const now = Date.now();
+                while (relayouts.length && now - relayouts[0] > 3000) relayouts.shift();
+                if (relayouts.length >= 6) return observer.disconnect(); // слишком часто — перестаём следить
+                relayouts.push(now);
+                renderResults();
+            });
+        });
+        observer.observe(root);
+        cleanups.push(() => {
+            cancelAnimationFrame(frame);
+            observer.disconnect();
+        });
+    }
+    cleanups.push(() => clearTimeout(timer));
+    // когда блок выгружается (переход на другую заметку, обновление Dataview), всё останавливаем
+    if (dv && dv.component && dv.component.register) dv.component.register(() => cleanups.forEach((fn) => fn()));
+
     // ---------- события ----------
-    let timer;
     root.addEventListener("input", (e) => {
         const f = e.target.dataset && e.target.dataset.filter;
         if (f === "search") {
@@ -180,6 +250,28 @@ function mount(container, books, opts) {
                 update();
                 return;
             }
+            if (action === "tags-toggle") {
+                tagsOpen = !tagsOpen;
+                store.set(tagsKey, tagsOpen ? "open" : "closed");
+                zones.tagsfield.classList.toggle("is-collapsed", !tagsOpen);
+                actionEl.setAttribute("aria-expanded", tagsOpen ? "true" : "false");
+                return;
+            }
+            if (action === "pulse-year") {
+                if (actionEl.dataset.value) {
+                    pulseYear = Number(actionEl.dataset.value);
+                    renderPulse();
+                }
+                return;
+            }
+            if (action === "pulse-month") {
+                // повторный клик по тому же месяцу снимает фильтр
+                state.month = state.month === actionEl.dataset.value ? null : actionEl.dataset.value;
+                const year = Number(state.month ? state.month.split("-")[0] : pulseYear);
+                if (years.includes(year)) pulseYear = year;
+                update();
+                return;
+            }
             if (action === "reset") {
                 Filters.reset(state);
                 root.querySelector('[data-filter="search"]').value = "";
@@ -193,7 +285,7 @@ function mount(container, books, opts) {
                 e.preventDefault();
                 e.stopPropagation();
                 actionEl.disabled = true;
-                Notes.reroll(actionEl.dataset.path).then(update);
+                Notes.reroll(actionEl.dataset.path).then(renderResults);
                 return;
             }
             if (action === "add") {

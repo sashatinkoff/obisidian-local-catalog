@@ -25,9 +25,13 @@ function apply(container) {
     const stretch = (node) => {
         // запоминаем, какие классы добавили мы, чтобы потом убрать только их
         if (!node._bgAdded) node._bgAdded = classes.filter((c) => !node.classList.contains(c));
-        node.classList.add(...classes);
-        node.style.setProperty("--file-line-width", "100%");
-        node.querySelectorAll(SIZERS).forEach((s) => s.style.setProperty("max-width", "100%", "important"));
+        // меняем DOM только если что-то реально отсутствует: лишняя запись класса снова разбудила бы наблюдатель
+        const missing = classes.filter((c) => !node.classList.contains(c));
+        if (missing.length) node.classList.add(...missing);
+        if (node.style.getPropertyValue("--file-line-width") !== "100%") node.style.setProperty("--file-line-width", "100%");
+        node.querySelectorAll(SIZERS).forEach((s) => {
+            if (s.style.getPropertyValue("max-width") !== "100%") s.style.setProperty("max-width", "100%", "important");
+        });
     };
 
     const restore = (node) => {

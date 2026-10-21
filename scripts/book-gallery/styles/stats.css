@@ -119,6 +119,145 @@
     text-decoration: underline !important;
 }
 
+/* ---------- «Пульс прочитанных за год» ---------- */
+.bg-root .bg-pulse {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+    border-radius: 16px;
+    background: var(--bg-surface);
+    border: 1px solid var(--bg-border);
+    box-shadow: var(--bg-shadow);
+}
+
+.bg-root .bg-pulse-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.bg-root .bg-year {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--bg-text);
+}
+
+.bg-root .bg-year-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    color: var(--bg-text-2);
+    transition: background 0.15s, color 0.15s;
+}
+
+.bg-root .bg-year-btn:hover:not(:disabled) {
+    background: var(--bg-accent-soft);
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-year-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.bg-root .bg-pulse-body {
+    display: grid;
+    grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+    gap: 28px;
+    align-items: stretch;
+}
+
+.bg-root .bg-pulse-sum {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.bg-root .bg-bars {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 8px;
+    height: 170px;
+}
+
+.bg-root .bg-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 100%;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.bg-root .bg-bar-val {
+    height: 16px;
+    font-size: 11.5px;
+    line-height: 16px;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-bar-track {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+}
+
+.bg-root .bg-bar-fill {
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    width: min(100%, 30px);
+    min-height: 3px;
+    transform: translateX(-50%);
+    border-radius: 6px 6px 3px 3px;
+    background: var(--bg-accent-line);
+    transition: height 0.3s, background 0.15s, box-shadow 0.15s;
+}
+
+.bg-root .bg-bar.is-peak .bg-bar-fill {
+    background: linear-gradient(to top, var(--bg-accent-line), var(--bg-accent));
+}
+
+.bg-root .bg-bar:hover .bg-bar-fill {
+    background: var(--bg-accent);
+}
+
+.bg-root .bg-bar.is-empty .bg-bar-fill {
+    background: var(--bg-chip);
+}
+
+.bg-root .bg-bar.is-on .bg-bar-fill {
+    background: var(--bg-accent-bg);
+    box-shadow: 0 0 0 2px var(--bg-accent-line);
+}
+
+.bg-root .bg-bar-lbl {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: var(--bg-text-3);
+}
+
+.bg-root .bg-bar.is-on .bg-bar-lbl,
+.bg-root .bg-bar:hover .bg-bar-lbl {
+    color: var(--bg-accent);
+}
+
+.bg-root .bg-pulse-hint {
+    font-size: 11px;
+    color: var(--bg-text-3);
+}
+
 /* На узком экране карточки статистики листаются по горизонтали */
 @container (max-width: 640px) {
     .bg-root .bg-stats {
@@ -137,5 +276,19 @@
 
     .bg-root .bg-stat-num {
         font-size: 30px;
+    }
+
+    .bg-root .bg-pulse {
+        padding: 16px;
+    }
+
+    .bg-root .bg-pulse-body {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+
+    .bg-root .bg-bars {
+        height: 130px;
+        gap: 4px;
     }
 }

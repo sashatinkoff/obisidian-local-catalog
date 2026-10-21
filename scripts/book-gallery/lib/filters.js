@@ -12,6 +12,12 @@ const SCORE_FILTERS = {
     low: (b) => b.score5 !== null && b.score5 < 3,
 };
 
+// Ключ месяца для фильтра: "2026-09"
+const monthKey = (ms) => {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
 const createState = () => ({
     search: "",
     author: "all",
@@ -19,6 +25,7 @@ const createState = () => ({
     tags: new Set(),
     tagQuery: "",   // строка поиска среди чипов тегов, на книги не влияет
     score: "all",
+    month: null,    // "2026-09" — книги, прочитанные в этом месяце (клик по столбцу «Пульса»)
     sort: SORTS[cfg.defaultSort] ? cfg.defaultSort : "date_desc",
 });
 
@@ -27,6 +34,7 @@ function matches(b, st, q) {
     if (st.author !== "all" && !b.authors.includes(st.author)) return false;
     if (st.genre !== "all" && !b.genres.includes(st.genre)) return false;
     if (!SCORE_FILTERS[st.score](b)) return false;
+    if (st.month && (!b.dateMs || monthKey(b.dateMs) !== st.month)) return false;
     if (st.tags.size) {
         const picked = [...st.tags];
         const ok = cfg.tagMode === "all" ? picked.every((t) => b.tags.includes(t)) : picked.some((t) => b.tags.includes(t));
@@ -46,10 +54,10 @@ const scoreCounts = (books) =>
 
 // Число включённых фильтров (для бейджа «N активных»)
 const activeCount = (st) =>
-    (st.search.trim() ? 1 : 0) + (st.author !== "all" ? 1 : 0) + (st.genre !== "all" ? 1 : 0) + st.tags.size + (st.score !== "all" ? 1 : 0);
+    (st.search.trim() ? 1 : 0) + (st.author !== "all" ? 1 : 0) + (st.genre !== "all" ? 1 : 0) + st.tags.size + (st.score !== "all" ? 1 : 0) + (st.month ? 1 : 0);
 
 function reset(st) {
     Object.assign(st, createState(), { sort: st.sort });
 }
 
-return { createState, apply, scoreCounts, activeCount, reset };
+return { createState, apply, scoreCounts, activeCount, reset, monthKey };

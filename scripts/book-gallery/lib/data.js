@@ -24,11 +24,6 @@ const getTags = (p) => {
     return Array.from(new Set(U.toArray(tags)));
 };
 
-const formatDate = (d) => {
-    if (!d) return "";
-    return d.toFormat ? d.toFormat(cfg.dateFormat) : String(d);
-};
-
 // Оценка по шкале ratingMax -> число от 0 до 5 или null
 function toScore5(raw) {
     const n = U.toNumber(raw);
@@ -120,7 +115,7 @@ function loadBooks() {
             score5,
             scoreText: score5 === null ? "" : score5.toFixed(1),
             dateMs: U.toMillis(date),
-            dateText: formatDate(date),
+            dateText: U.formatDate(U.toMillis(date), cfg.dateFormat, cfg.dateLocale),
             cover: resolveCover(p),
             quote,
             fileKey: p.file.name.toLowerCase(),

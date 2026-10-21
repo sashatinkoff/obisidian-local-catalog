@@ -6,7 +6,7 @@
 //
 // Структура папки:
 //   view.js          — этот файл: загружает модули и собирает галерею
-//   lib/*.js         — модули (config, utils, icons, data, notes, stats, filters, styles, layout, cards, list, templates, ui)
+//   lib/*.js         — модули (config, utils, icons, data, notes, stats, filters, styles, layout, thumbs, cards, list, templates, ui)
 //   styles/*.css     — стили, разбитые по темам (подключает lib/styles.js)
 //
 // Dataview умеет загружать только один файл, поэтому модули читаются отсюда
@@ -16,7 +16,7 @@
 const DEFAULT_DIR = "scripts/book-gallery";
 const MODULES = [
     "config", "utils", "icons", "data", "notes", "stats", "filters", // данные и логика
-    "styles", "layout",                                    // подключение стилей и ширина
+    "styles", "layout", "thumbs",                          // стили, ширина и уменьшенные обложки
     "cards", "list", "templates", "ui",                    // отрисовка
 ]; // порядок важен: модуль может использовать только те, что загружены раньше
 
@@ -63,7 +63,7 @@ try {
 
     const t0 = performance.now();
     const books = data.loadBooks();
-    ui.mount(container, books, { loadMs: performance.now() - t0 });
+    await ui.mount(container, books, { loadMs: performance.now() - t0 });
 
     if (cssError) {
         // стили не загрузились, поэтому оформляем сообщение inline
