@@ -3,13 +3,16 @@
 const { cfg } = ctx;
 const { SORTS } = ctx.lib.data;
 
-// Фильтр по оценке (по 5-балльной шкале): id -> условие
+// Фильтр по оценке (по 5-балльной шкале) — строгий: «3» это только 3.0 и 3.5, а не «3 и выше».
+// При шкале 10 баллов: 5 = 10; 4 = 8–9; 3 = 6–7; 2 = 4–5; «меньше 2» = 0–3.
+const starsOf = (b) => (b.score5 === null ? null : Math.min(5, Math.floor(b.score5 + 1e-9)));
 const SCORE_FILTERS = {
     all: () => true,
-    "5": (b) => b.score5 !== null && b.score5 >= 4.95,
-    "4": (b) => b.score5 !== null && b.score5 >= 4,
-    "3": (b) => b.score5 !== null && b.score5 >= 3,
-    low: (b) => b.score5 !== null && b.score5 < 3,
+    "5": (b) => starsOf(b) === 5,
+    "4": (b) => starsOf(b) === 4,
+    "3": (b) => starsOf(b) === 3,
+    "2": (b) => starsOf(b) === 2,
+    low: (b) => b.score5 !== null && b.score5 < 2,
 };
 
 // Ключ месяца для фильтра: "2026-09"
@@ -60,4 +63,4 @@ function reset(st) {
     Object.assign(st, createState(), { sort: st.sort });
 }
 
-return { createState, apply, scoreCounts, activeCount, reset, monthKey };
+module.exports = { createState, apply, scoreCounts, activeCount, reset, monthKey };

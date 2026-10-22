@@ -1,4 +1,4 @@
-// lib/utils.js — небольшие общие функции без зависимостей от настроек.
+// src/utils.js — небольшие общие функции без зависимостей от настроек.
 
 const ESC_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ESC_MAP[c]);
@@ -11,23 +11,25 @@ const el = (tag, className, props) => {
     return node;
 };
 
-// Dataview-массив / обычный массив / скаляр -> обычный массив
+// Значение свойства -> плоский массив без пустых значений.
+// В frontmatter ссылка [[Имя]] без кавычек приходит как вложенный массив [["Имя"]] — разворачиваем
 const toArray = (v) => {
     if (v === undefined || v === null || v === "") return [];
-    if (Array.isArray(v)) return v;
-    if (v.values && Array.isArray(v.values)) return v.values;
+    if (Array.isArray(v)) return v.flatMap(toArray);
     return [v];
 };
 
 // Массив строк без пустых значений (для классов и т.п.)
 const toStringList = (v) => toArray(v).map(String).filter(Boolean);
 
-// Элемент списка -> строка (поддержка ссылок [[...]])
+// "[[Папка/Имя|Псевдоним]]" -> "Имя" (текст для показа); обычная строка возвращается как есть
 const itemToString = (item) => {
-    if (item && item.path) {
-        return item.display || item.path.split("/").pop().replace(/\.md$/, "");
-    }
-    return String(item);
+    const s = String(item ?? "").trim();
+    const m = s.match(/^!?\[\[([^\]]*)\]\]$/);
+    if (!m) return s;
+    const [target, alias] = m[1].split("|");
+    if (alias && alias.trim()) return alias.trim();
+    return target.split("#")[0].split("/").pop().replace(/\.md$/i, "").trim();
 };
 
 // Список значений с разбором "a, b, c"
@@ -37,10 +39,18 @@ const splitList = (v) =>
         .map((s) => s.trim())
         .filter(Boolean);
 
+// Значение даты -> миллисекунды (локальное время). Понимает 2026-09-07, 2026-09-07T10:00, 07.09.2026, Date и числа
 const toMillis = (d) => {
+    d = toArray(d)[0];
     if (!d) return 0;
-    if (d.toMillis) return d.toMillis();
-    const t = Date.parse(d);
+    if (typeof d === "number") return d;
+    if (d instanceof Date) return d.getTime();
+    const s = String(d).trim();
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+    m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (m) return new Date(+m[3], +m[2] - 1, +m[1]).getTime();
+    const t = Date.parse(s);
     return Number.isNaN(t) ? 0 : t;
 };
 
@@ -109,4 +119,18 @@ function formatDate(ms, fmt, locale) {
 const cssUrl = (u) =>
     `url('${String(u).replace(/['"()\\\s]/g, (c) => "%" + c.charCodeAt(0).toString(16).padStart(2, "0"))}')`;
 
-return { esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl, formatDate };
+// Значение свойства по имени: точное совпадение, затем без учёта регистра, пробелов, «_» и «-»
+// (как в Dataview: «Cover», «cover» и «COVER» — одно и то же свойство)
+const normKey = (k) => String(k).toLowerCase().replace(/[\s_-]+/g, "");
+const prop = (fm, name) => {
+    if (!fm || !name) return undefined;
+    if (Object.prototype.hasOwnProperty.call(fm, name)) return fm[name];
+    const want = normKey(name);
+    for (const k of Object.keys(fm)) if (normKey(k) === want) return fm[k];
+    return undefined;
+};
+
+// "/Книги/" -> "Книги" ("" или "/" — всё хранилище)
+const normFolder = (f) => String(f ?? "").trim().replace(/^\/+|\/+$/g, "");
+
+module.exports = { prop, normFolder, esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl, formatDate };

@@ -1,4 +1,4 @@
-// lib/notes.js — тексты для карточек: заметки и цитаты книги, отрывок из заметки самой книги.
+// src/notes.js — тексты для карточек: заметки и цитаты книги, отрывок из заметки самой книги.
 //
 // Источники текста по приоритету:
 //   1. случайная заметка-цитата книги (файл со свойством `Источник` или ссылка из свойства `Заметки`);
@@ -7,7 +7,7 @@
 // Файлы читаются заранее (preload) ограниченным числом потоков, чтобы раскладка знала, сколько
 // текста у каждой книги: книги с небольшим текстом не получают большую карточку.
 
-const { cfg, dv, app } = ctx;
+const { cfg, app } = ctx;
 const U = ctx.lib.utils;
 
 const booksByPath = new Map();  // путь книги -> книга
@@ -38,17 +38,25 @@ function buildIndex(books) {
 
     // 2. заметки с полем «Источник», указывающим на книгу
     try {
-        let pages = cfg.notesFolder ? dv.pages(`"${String(cfg.notesFolder).replace(/"/g, '\\"')}"`) : dv.pages();
-        pages = pages.where((p) => p[cfg.sourceField]);
-        pages.array().forEach((p) => {
-            if (booksByPath.has(p.file.path)) return;
-            U.toArray(p[cfg.sourceField]).forEach((s) => {
-                const raw = s && s.path ? s.path : stripLink(s);
-                const key = String(raw).toLowerCase();
-                const b = lookup.get(key) || lookup.get(baseName(raw));
-                if (b) add(b, p.file.path, p.file.name);
+        const folder = U.normFolder(cfg.notesFolder);
+        const prefix = folder ? folder + "/" : "";
+        for (const file of app.vault.getMarkdownFiles()) {
+            if (booksByPath.has(file.path) || (prefix && !file.path.startsWith(prefix))) continue;
+            const cache = app.metadataCache.getFileCache(file);
+            const fm = cache && cache.frontmatter;
+            const sourceValue = U.prop(fm, cfg.sourceField);
+            if (!sourceValue) continue;
+            U.toArray(sourceValue).forEach((s) => {
+                const raw = stripLink(s);
+                if (!raw) return;
+                let b = lookup.get(raw.toLowerCase()) || lookup.get(baseName(raw));
+                if (!b) {
+                    const dest = app.metadataCache.getFirstLinkpathDest(raw, file.path);
+                    if (dest) b = booksByPath.get(dest.path);
+                }
+                if (b) add(b, file.path, file.basename);
             });
-        });
+        }
     } catch (e) {
         console.warn("book-gallery: не удалось собрать заметки-цитаты", e);
     }
@@ -244,4 +252,4 @@ async function reroll(bookPath) {
     return book ? pick(book, true) : null;
 }
 
-return { buildIndex, parse, parseExcerpt, content, textLength, pick, preload, hydrate, reroll };
+module.exports = { buildIndex, parse, parseExcerpt, content, textLength, pick, preload, hydrate, reroll };

@@ -1,5 +1,4 @@
-// lib/config.js — параметры по умолчанию и слияние с тем, что передал пользователь.
-// Файл модуля — тело функции: получает `ctx`, возвращает объект с экспортами.
+// src/config.js — параметры по умолчанию и слияние: значения по умолчанию < настройки плагина < параметры блока.
 
 const defaults = {
     // --- данные ---
@@ -35,10 +34,12 @@ const defaults = {
     tagsCollapsed: false,             // панель тегов свёрнута по умолчанию (дальше запоминается выбор)
     bigShare: 0.4,                    // доля больших карточек в сетке среди книг, у которых достаточно текста
     bigMinChars: 90,                  // минимум символов текста, чтобы книга могла получить большую карточку
+    coverFromBody: true,              // нет файла обложки (или свойство cover пустое) — взять первую картинку из текста заметки
     showExcerpt: true,                // если у книги нет заметок и цитаты, показывать отрывок из её собственной заметки
     excerptChars: 420,                // длина отрывка
-    showFooter: true,                 // строка «Dataview: загружено N записей»
+    showFooter: true,                 // строка «загружено N записей» внизу
     addButton: true,                  // кнопка «Добавить книгу» (создаёт заметку в folder)
+    compactPairs: true,               // бенто: книги с небольшим текстом иногда собираются в «стопку» из двух компактных карточек
     featured: true,                   // большая карточка для лучшей книги (в режиме карточек)
     featuredMinScore: 4.5,            // минимальная оценка (по 5-балльной шкале) для главной карточки
     featuredLabel: "Книга года · топ 1",
@@ -58,15 +59,27 @@ const defaults = {
     fullWidthClasses: ["max", "full-width"],
 
     // --- файлы ---
-    dir: "scripts/book-gallery",      // папка со скриптом (там lib/ и styles/)
     cssFiles: ["theme", "base", "header", "stats", "filters", "cards", "list", "layout"], // порядок подключения styles/*.css
 };
 
-function build(input) {
-    const user = input || {};
-    return Object.assign({}, defaults, user, {
-        fields: Object.assign({}, defaults.fields, user.fields || {}),
+// Слияние нескольких слоёв настроек; вложенный объект fields сливается по ключам
+function build(...layers) {
+    const out = Object.assign({}, defaults);
+    out.fields = Object.assign({}, defaults.fields);
+    layers.forEach((layer) => {
+        if (!layer || typeof layer !== "object") return;
+        Object.keys(layer).forEach((k) => {
+            if (k === "fields") Object.assign(out.fields, layer.fields || {});
+            else if (layer[k] !== undefined) out[k] = layer[k];
+        });
     });
+    // числа и логические значения из YAML бывают строками
+    ["bigShare", "bigMinChars", "excerptChars", "ratingMax", "featuredMinScore", "lowScore", "searchDebounce"].forEach((k) => {
+        const n = parseFloat(String(out[k]).replace(",", "."));
+        out[k] = Number.isNaN(n) ? defaults[k] : n;
+    });
+    if (!out.ratingMax || out.ratingMax <= 0) out.ratingMax = defaults.ratingMax;
+    return out;
 }
 
-return { defaults, build };
+module.exports = { defaults, build };

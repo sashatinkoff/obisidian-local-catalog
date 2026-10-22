@@ -1,4 +1,4 @@
-// lib/layout.js — ширина заметки на весь экран (опция fullWidth).
+// src/layout.js — ширина заметки на весь экран (опция fullWidth).
 //
 // Obsidian ограничивает ширину текста через --file-line-width и max-width у контейнеров
 // .markdown-preview-sizer (чтение) и .cm-sizer (редактирование). Классы из cssclasses
@@ -10,7 +10,7 @@ const HOSTS = ".markdown-preview-view, .markdown-source-view";
 const OWN_CLASS = "book-gallery-fw";
 
 function apply(container) {
-    const { cfg, dv } = ctx;
+    const { cfg } = ctx;
     if (!cfg.fullWidth) return;
 
     const classes = [OWN_CLASS, ...ctx.lib.utils.toStringList(cfg.fullWidthClasses)];
@@ -58,7 +58,7 @@ function apply(container) {
 
     // Блок выгружается (переход на другую заметку, перерисовка): убираем стили,
     // но только если на странице не осталось ни одной галереи
-    dv.component?.register(() => {
+    ctx.component?.register(() => {
         alive = false;
         observer?.disconnect();
         cancelAnimationFrame(frame);
@@ -69,4 +69,4 @@ function apply(container) {
     });
 }
 
-return { apply };
+module.exports = { apply };

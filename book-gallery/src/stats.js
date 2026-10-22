@@ -98,4 +98,4 @@ function insight(books, stats) {
     return book ? { book } : null;
 }
 
-return { compute, insight, pulse, years };
+module.exports = { compute, insight, pulse, years };

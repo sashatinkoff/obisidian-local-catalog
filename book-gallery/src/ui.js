@@ -1,6 +1,6 @@
-// lib/ui.js — сборка интерфейса, состояние, события и обновление списка.
+// src/ui.js — сборка интерфейса, состояние, события и обновление списка.
 
-const { cfg, app, dv } = ctx;
+const { cfg, app } = ctx;
 const U = ctx.lib.utils;
 const { uniqueValues } = ctx.lib.data;
 const Stats = ctx.lib.stats;
@@ -28,19 +28,24 @@ const store = {
 };
 
 const notify = (msg) => {
-    if (typeof Notice !== "undefined") new Notice(msg);
+    if (ctx.obsidian && ctx.obsidian.Notice) new ctx.obsidian.Notice(msg);
     else console.warn("book-gallery:", msg);
 };
 
-// Число колонок бенто-сетки по ширине блока. Для уже выбранного числа колонок (prev) действует запас
-// в 48 px: когда из-за смены раскладки появляется или исчезает полоса прокрутки, ширина меняется
-// на ~15 px, и без запаса сетка бесконечно перестраивалась бы туда-сюда
+// Число колонок бенто-сетки по ширине блока: примерно по одной колонке на каждые ~300 px, от 2 до 8.
+// Для уже выбранного числа колонок (prev) действует запас в 48 px: когда из-за смены раскладки появляется
+// или исчезает полоса прокрутки, ширина меняется на ~15 px, и без запаса сетка бесконечно перестраивалась бы
+const COL_STEPS = [0, 0, 0, 640, 900, 1200, 1500, 1800, 2100]; // COL_STEPS[n] — минимальная ширина для n колонок
 function colsFor(w, prev) {
-    if (!prev) return w >= 980 ? 4 : w >= 640 ? 3 : 2;
+    if (!prev) {
+        let c = 2;
+        while (c < 8 && w >= COL_STEPS[c + 1]) c++;
+        return c;
+    }
     const MARGIN = 48;
     let c = prev;
-    while (c < 4 && w >= (c === 2 ? 640 : 980) + MARGIN) c++;
-    while (c > 2 && w < (c === 4 ? 980 : 640) - MARGIN) c--;
+    while (c < 8 && w >= COL_STEPS[c + 1] + MARGIN) c++;
+    while (c > 2 && w < COL_STEPS[c] - MARGIN) c--;
     return c;
 }
 
@@ -79,19 +84,22 @@ async function addBook() {
 
 async function mount(container, books, opts) {
     const loadMs = (opts && opts.loadMs) || 0;
+    // keep — объект владельца блока: переживает перерисовку, чтобы фильтры и выбранный вид не сбрасывались
+    const keep = (opts && opts.keep) || {};
 
-    // Dataview может запустить блок повторно, пока предыдущий запуск ещё читает файлы
+    // блок могут перерисовать, пока предыдущий запуск ещё читает файлы
     const token = {};
     container.__bgToken = token;
-    container.innerHTML = '<div style="padding:24px;text-align:center;opacity:.6">Загрузка…</div>';
+    // при тихом обновлении старая версия остаётся на экране, пока не готова новая (без мигания и скачка прокрутки)
+    if (!(opts && opts.silent)) container.innerHTML = '<div style="padding:24px;text-align:center;opacity:.6">Загрузка…</div>';
 
     const saved = store.get(cfg.storageKey);
-    let view = saved === "list" || saved === "cards" ? saved : cfg.defaultView === "table" ? "list" : cfg.defaultView;
+    let view = keep.view || (saved === "list" || saved === "cards" ? saved : cfg.defaultView === "table" ? "list" : cfg.defaultView);
     if (view !== "list") view = "cards";
 
     const tagsKey = cfg.storageKey + "-tags";
     const savedTags = store.get(tagsKey);
-    let tagsOpen = savedTags === "open" ? true : savedTags === "closed" ? false : !cfg.tagsCollapsed;
+    let tagsOpen = typeof keep.tagsOpen === "boolean" ? keep.tagsOpen : savedTags === "open" ? true : savedTags === "closed" ? false : !cfg.tagsCollapsed;
 
     // заметки книг нужны до статистики: от них зависят счётчики и «инсайт месяца»
     Notes.buildIndex(books);
@@ -100,12 +108,13 @@ async function mount(container, books, opts) {
     if (container.__bgToken !== token) return; // блок уже перезапущен
     container.innerHTML = "";
 
-    const state = Filters.createState();
+    const state = keep.state || Filters.createState();
     const allTags = uniqueValues(books, "tags");
     const stats = cfg.showStats ? Stats.compute(books) : null;
     const insight = cfg.showStats ? Stats.insight(books, stats) : null;
     const years = Stats.years(books);
-    let pulseYear = years[0];
+    let pulseYear = years.includes(keep.pulseYear) ? keep.pulseYear : years[0];
+    const sync = () => Object.assign(keep, { state, view, tagsOpen, pulseYear });
 
     let timer; // задержка поиска
 
@@ -116,7 +125,7 @@ async function mount(container, books, opts) {
         `<div data-zone="pulse"></div>` +
         T.panel({ authors: uniqueValues(books, "authors"), genres: uniqueValues(books, "genres"), view, tagsOpen }) +
         `<div class="bg-results" data-zone="results"></div>` +
-        (cfg.showFooter ? T.footer(books.length, loadMs) : "");
+        (cfg.showFooter ? T.footer(books.length, loadMs, books.coverStats) : "");
     container.appendChild(root);
 
     const zone = (name) => root.querySelector(`[data-zone="${name}"]`);
@@ -130,7 +139,16 @@ async function mount(container, books, opts) {
         applied: zone("applied"),
         results: zone("results"),
     };
-    root.querySelector('[data-filter="sort"]').value = state.sort;
+    // восстановить значения полей (после перерисовки состояние уже может быть непустым)
+    const setField = (name, value) => {
+        const node = root.querySelector(`[data-filter="${name}"]`);
+        if (node) node.value = value;
+    };
+    setField("search", state.search);
+    setField("tagQuery", state.tagQuery);
+    setField("author", state.author);
+    setField("genre", state.genre);
+    setField("sort", state.sort);
 
     let lastList = [];
     let cols = 0;
@@ -148,6 +166,7 @@ async function mount(container, books, opts) {
     }
 
     function update() {
+        sync();
         lastList = Filters.apply(books, state);
 
         const active = Filters.activeCount(state);
@@ -188,8 +207,8 @@ async function mount(container, books, opts) {
         });
     }
     cleanups.push(() => clearTimeout(timer));
-    // когда блок выгружается (переход на другую заметку, обновление Dataview), всё останавливаем
-    if (dv && dv.component && dv.component.register) dv.component.register(() => cleanups.forEach((fn) => fn()));
+    // когда блок выгружается (переход на другую заметку, закрытие вкладки, перерисовка), всё останавливаем
+    if (opts && typeof opts.onCleanup === "function") opts.onCleanup(() => cleanups.forEach((fn) => fn()));
 
     // ---------- события ----------
     root.addEventListener("input", (e) => {
@@ -252,6 +271,7 @@ async function mount(container, books, opts) {
             }
             if (action === "tags-toggle") {
                 tagsOpen = !tagsOpen;
+                sync();
                 store.set(tagsKey, tagsOpen ? "open" : "closed");
                 zones.tagsfield.classList.toggle("is-collapsed", !tagsOpen);
                 actionEl.setAttribute("aria-expanded", tagsOpen ? "true" : "false");
@@ -260,6 +280,7 @@ async function mount(container, books, opts) {
             if (action === "pulse-year") {
                 if (actionEl.dataset.value) {
                     pulseYear = Number(actionEl.dataset.value);
+                    sync();
                     renderPulse();
                 }
                 return;
@@ -316,4 +337,4 @@ async function mount(container, books, opts) {
     Notes.hydrate(root, Cards.fill); // инсайт месяца
 }
 
-return { mount };
+module.exports = { mount };

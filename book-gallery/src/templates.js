@@ -243,16 +243,17 @@ function scoreChips(counts, active) {
     const items = [
         ["all", `Все (${counts.all})`],
         ["5", `5.0 ${star}`],
-        ["4", `4.0+ ${star}`],
-        ["3", `3.0+ ${star}`],
-        ["low", `${icon("thumbs-down")}Менее 3.0`],
+        ["4", `4.0–4.5 ${star}`],
+        ["3", `3.0–3.5 ${star}`],
+        ["2", `2.0–2.5 ${star}`],
+        ["low", `${icon("thumbs-down")}Менее 2.0`],
     ];
     return items
         .map(([id, label]) => `<button type="button" class="bg-chip bg-chip--score bg-mono${id === "low" ? " bg-chip--danger" : ""}${active === id ? " is-on" : ""}" data-action="score" data-value="${id}">${label}</button>`)
         .join("");
 }
 
-const SCORE_LABELS = { "5": "5.0", "4": "4.0+", "3": "3.0+", low: "< 3.0" };
+const SCORE_LABELS = { "5": "5.0", "4": "4.0–4.5", "3": "3.0–3.5", "2": "2.0–2.5", low: "< 2.0" };
 
 function applied(st, list, total) {
     const chips = [];
@@ -273,8 +274,13 @@ function applied(st, list, total) {
 <div class="bg-foot-right"><span>Совпадений: <b class="bg-accent">${list.length}</b> из ${total} заметок</span>${last.dateMs ? `<span class="bg-last" title="Последнее добавление">${icon("file")}${esc(last.dateText)}</span>` : ""}</div>`;
 }
 
-function footer(total, ms) {
-    return `<div class="bg-footer bg-mono">${icon("database")}Dataview: загружено ${total} ${plural(total, ["запись", "записи", "записей"])} за ${Math.max(1, Math.round(ms))} мс</div>`;
+function footer(total, ms, cov) {
+    const loaded = `Book Gallery: загружено ${total} ${plural(total, ["запись", "записи", "записей"])} за ${Math.max(1, Math.round(ms))} мс`;
+    const lost = cov && cov.set > cov.found ? cov.set - cov.found : 0;
+    const warn = lost
+        ? ` · <span class="bg-accent" title="${esc("Не найдены файлы обложек. Примеры: " + cov.missing.join("; "))}">обложек не найдено: ${lost}</span>`
+        : "";
+    return `<div class="bg-footer bg-mono">${icon("database")}${loaded}${warn}</div>`;
 }
 
-return { header, stats, pulse, panel, tagChips, scoreChips, applied, footer, monthKey };
+module.exports = { header, stats, pulse, panel, tagChips, scoreChips, applied, footer, monthKey };

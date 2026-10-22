@@ -42,4 +42,4 @@ function table(list, selectedTags) {
 </div>`;
 }
 
-return { table };
+module.exports = { table };

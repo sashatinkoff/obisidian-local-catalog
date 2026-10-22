@@ -159,6 +159,26 @@ function wide(b, kind) {
 </article>`;
 }
 
+// Компактная карточка (две такие складываются в «стопку» в одной колонке): обложка слева, текст справа
+function compact(b) {
+    const tags = b.tags.slice(0, 2).map((t) => `<span class="bg-tag-plain bg-mono">${esc(t)}</span>`).join("");
+    return `
+<article class="bg-card bg-card--compact" ${openAttrs(b.path)}>
+    ${coverHtml(b, { tag: false })}
+    <div class="bg-card-body">
+        <div class="bg-card-meta">
+            ${genreHtml(b)}
+        </div>
+        <div class="bg-card-title">${esc(b.title)}</div>
+        <div class="bg-card-author">${esc(b.authorText || "Неизвестен")}</div>
+        <div class="bg-card-foot"><span class="bg-date bg-mono">${esc(b.dateText)}</span>${tags ? `<div class="bg-tags-plain">${tags}</div>` : ""}</div>
+    </div>
+</article>`;
+}
+
+// Две компактные карточки друг над другом занимают одну колонку полосы
+const stack = (a, b) => `<div class="bg-stack" style="--span:1">${compact(a)}${compact(b)}</div>`;
+
 // ---------- отбор ----------
 // Достаточно ли у книги текста для большой карточки
 const isEligible = (b) => Notes.textLength(b) >= cfg.bigMinChars;
@@ -290,7 +310,32 @@ function grid(list, cols) {
     // главная карточка идёт первой, остальные — в порядке сортировки
     const ordered = top ? [top, ...list.filter((b) => b !== top)] : list;
 
-    const items = ordered.map((b) => {
+    // «Стопки»: книги с небольшим текстом (им большая карточка не положена) через одну объединяются в пары
+    // с ближайшей такой же книгой впереди — не дальше WINDOW позиций, чтобы не ломать порядок сортировки
+    const paired = new Map(); // первая книга пары -> вторая
+    const used = new Set();
+    if (cfg.compactPairs !== false) {
+        const canPair = (b) => b !== top && !isEligible(b) && !isLow(b);
+        let take = true; // пары образуются через одну, остальные остаются высокими карточками
+        for (let i = 0; i < ordered.length; i++) {
+            const a = ordered[i];
+            if (used.has(a) || !canPair(a)) continue;
+            let mate = null;
+            for (let j = i + 1; j < ordered.length && j <= i + WINDOW && !mate; j++) {
+                if (!used.has(ordered[j]) && canPair(ordered[j])) mate = ordered[j];
+            }
+            if (!mate) continue;
+            if (take) {
+                paired.set(a, mate);
+                used.add(a);
+                used.add(mate);
+            }
+            take = !take;
+        }
+    }
+
+    const items = ordered.filter((b) => !used.has(b) || paired.has(b)).map((b) => {
+        if (paired.has(b)) return { b, mate: paired.get(b), kind: "pair", allowed: [1], cost: () => 0, locked: false };
         const kind = b === top ? "featured" : isLow(b) ? "low" : "normal";
         let allowed, cost;
         if (b === top) {
@@ -313,11 +358,13 @@ function grid(list, cols) {
         .map((band) => {
             const wideOnly = band.every((x) => x.span >= 2);
             const single = band.length === 1;
-            const cards = band.map(({ item, span }) => (span >= 2 ? wide(item.b, item.kind) : tall(item.b, item.kind))).join("");
+            const cards = band
+                .map(({ item, span }) => (item.kind === "pair" ? stack(item.b, item.mate) : span >= 2 ? wide(item.b, item.kind) : tall(item.b, item.kind)))
+                .join("");
             return `<div class="bg-band${wideOnly ? " bg-band--wide" : ""}${single ? " bg-band--single" : ""}" style="--cols:${c}">${cards}</div>`;
         })
         .join("");
     return `<div class="bg-bento">${html}</div>`;
 }
 
-return { grid, pickFeatured, quoteText, fill, plan };
+module.exports = { grid, pickFeatured, quoteText, fill, plan };
