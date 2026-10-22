@@ -31,7 +31,12 @@ const defaults = {
     title: "Каталог прочитанных книг", // заголовок над галереей; "" — не показывать
     showStats: true,                  // блок «месяц + инсайт»
     showPulse: true,                  // виджет «Пульс прочитанных за год»
+    showProgress: true,               // инфокарточки о прогрессе под «Пульсом года»
+    yearGoal: 0,                      // план на год, книг (0 — не задан)
+    yearGoalPages: 0,                 // план на год, страниц (0 — не задан)
+    yearGoals: null,                  // свой план для отдельных лет: { 2025: 40, 2026: 52 } (только в блоке кода)
     tagsCollapsed: false,             // панель тегов свёрнута по умолчанию (дальше запоминается выбор)
+    wideShare: 0.12,                  // доля широких карточек (на две колонки) в сетке; «Книга года» не считается, 0 — без широких
     bigShare: 0.4,                    // доля больших карточек в сетке среди книг, у которых достаточно текста
     bigMinChars: 90,                  // минимум символов текста, чтобы книга могла получить большую карточку
     coverFromBody: true,              // нет файла обложки (или свойство cover пустое) — взять первую картинку из текста заметки
@@ -39,7 +44,7 @@ const defaults = {
     excerptChars: 420,                // длина отрывка
     showFooter: true,                 // строка «загружено N записей» внизу
     addButton: true,                  // кнопка «Добавить книгу» (создаёт заметку в folder)
-    compactPairs: true,               // бенто: книги с небольшим текстом иногда собираются в «стопку» из двух компактных карточек
+    coverFit: "cover",                // обложки в карточках: "cover" — заполнить и обрезать по краям, "contain" — показать целиком
     featured: true,                   // большая карточка для лучшей книги (в режиме карточек)
     featuredMinScore: 4.5,            // минимальная оценка (по 5-балльной шкале) для главной карточки
     featuredLabel: "Книга года · топ 1",
@@ -74,7 +79,7 @@ function build(...layers) {
         });
     });
     // числа и логические значения из YAML бывают строками
-    ["bigShare", "bigMinChars", "excerptChars", "ratingMax", "featuredMinScore", "lowScore", "searchDebounce"].forEach((k) => {
+    ["bigShare", "bigMinChars", "excerptChars", "ratingMax", "featuredMinScore", "lowScore", "searchDebounce", "yearGoal", "yearGoalPages", "wideShare"].forEach((k) => {
         const n = parseFloat(String(out[k]).replace(",", "."));
         out[k] = Number.isNaN(n) ? defaults[k] : n;
     });

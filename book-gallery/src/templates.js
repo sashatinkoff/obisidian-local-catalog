@@ -8,6 +8,9 @@ const { SORTS } = ctx.lib.data;
 const Notes = ctx.lib.notes;
 
 // ---------- заголовок ----------
+// 3.2 -> «3,2», 3 -> «3»
+const num1 = (n) => String(Math.round(n * 10) / 10).replace(".", ",");
+
 function header(total) {
     if (!cfg.title && !cfg.addButton) return "";
     return `
@@ -77,7 +80,8 @@ function stats(s, insight) {
         const b = insight.book;
         const c = Notes.content(b);
         const text = c ? (c.source === "excerpt" ? c.quote : `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}»`) : "";
-        const target = c ? { path: c.path, name: c.name } : { path: b.path, name: b.title };
+        // подпись — книга и автор, а не название заметки; клик открывает книгу
+        const target = { path: b.path, name: b.authorText ? `${b.title} — ${b.authorText}` : b.title };
         insightCard = `
 <div class="bg-stat bg-stat--insight" data-book="${esc(b.path)}" data-role="insight">
     <div class="bg-stat-head">
@@ -104,8 +108,10 @@ const monthShort = (year, m) => {
 const monthKey = (year, m) => `${year}-${String(m + 1).padStart(2, "0")}`;
 
 // data — результат Stats.pulse; selected — ключ выбранного месяца ("2026-09") или null
-function pulse(data, selected) {
+function pulse(data, selected, goalPerMonth) {
     if (!data || !data.years.length) return "";
+    // шкала столбцов; если задан план, пунктир плана тоже должен помещаться
+    const scale = Math.max(data.max, goalPerMonth ? Math.ceil(goalPerMonth) : 0, 1);
 
     const idx = data.years.indexOf(data.year);
     const older = data.years[idx + 1];
@@ -116,13 +122,13 @@ function pulse(data, selected) {
     const bars = data.months
         .map((x) => {
             const key = monthKey(data.year, x.m);
-            const h = x.count ? Math.max(8, Math.round((x.count / data.max) * 100)) : 3;
+            const h = x.count ? Math.max(8, Math.round((x.count / scale) * 100)) : 3;
             const full = formatDate(new Date(data.year, x.m, 1).getTime(), "MMMM yyyy", cfg.dateLocale);
             const hint = `${full}: ${x.count} ${plural(x.count, ["книга", "книги", "книг"])}${x.pages ? `, ${fmtInt(x.pages)} стр` : ""}`;
             return `
 <button class="bg-bar${selected === key ? " is-on" : ""}${x.count ? "" : " is-empty"}${x.count === data.max && x.count ? " is-peak" : ""}" type="button" data-action="pulse-month" data-value="${key}" title="${esc(hint)}">
     <span class="bg-bar-val bg-mono">${x.count || ""}</span>
-    <span class="bg-bar-track"><span class="bg-bar-fill" style="height:${h}%"></span></span>
+    <span class="bg-bar-track"><span class="bg-bar-fill" style="height:${h}%"></span>${goalPerMonth ? `<span class="bg-bar-goal" style="bottom:${Math.min(100, (goalPerMonth / scale) * 100)}%"></span>` : ""}</span>
     <span class="bg-bar-lbl bg-mono">${esc(monthShort(data.year, x.m))}</span>
 </button>`;
         })
@@ -150,7 +156,7 @@ function pulse(data, selected) {
         </div>
         <div class="bg-bars" role="group" aria-label="Книги по месяцам">${bars}</div>
     </div>
-    <div class="bg-pulse-hint bg-mono">Нажмите на столбец, чтобы показать книги месяца</div>
+    <div class="bg-pulse-hint bg-mono">Нажмите на столбец, чтобы показать книги месяца${goalPerMonth ? ` · пунктир — план: ${num1(goalPerMonth)} ${plural(Math.round(goalPerMonth), ["книга", "книги", "книг"])} в месяц` : ""}</div>
 </section>`;
 }
 
@@ -242,18 +248,18 @@ function scoreChips(counts, active) {
     const star = icon("star", "bg-ico--fill bg-star");
     const items = [
         ["all", `Все (${counts.all})`],
-        ["5", `5.0 ${star}`],
-        ["4", `4.0–4.5 ${star}`],
-        ["3", `3.0–3.5 ${star}`],
-        ["2", `2.0–2.5 ${star}`],
-        ["low", `${icon("thumbs-down")}Менее 2.0`],
+        ["5", `5 ${star}`],
+        ["4", `4 ${star}`],
+        ["3", `3 ${star}`],
+        ["2", `2 ${star}`],
+        ["low", `${icon("thumbs-down")}Менее 2`],
     ];
     return items
         .map(([id, label]) => `<button type="button" class="bg-chip bg-chip--score bg-mono${id === "low" ? " bg-chip--danger" : ""}${active === id ? " is-on" : ""}" data-action="score" data-value="${id}">${label}</button>`)
         .join("");
 }
 
-const SCORE_LABELS = { "5": "5.0", "4": "4.0–4.5", "3": "3.0–3.5", "2": "2.0–2.5", low: "< 2.0" };
+const SCORE_LABELS = { "5": "5 ★", "4": "4 ★", "3": "3 ★", "2": "2 ★", low: "менее 2 ★" };
 
 function applied(st, list, total) {
     const chips = [];
@@ -274,6 +280,145 @@ function applied(st, list, total) {
 <div class="bg-foot-right"><span>Совпадений: <b class="bg-accent">${list.length}</b> из ${total} заметок</span>${last.dateMs ? `<span class="bg-last" title="Последнее добавление">${icon("file")}${esc(last.dateText)}</span>` : ""}</div>`;
 }
 
+// ---------- инфокарточки о прогрессе ----------
+const RING = 2 * Math.PI * 42;
+const ring = (pct) =>
+    `<svg class="bg-ring" viewBox="0 0 100 100" aria-hidden="true"><circle class="bg-ring-bg" cx="50" cy="50" r="42"/><circle class="bg-ring-fg" cx="50" cy="50" r="42" stroke-dasharray="${((RING * pct) / 100).toFixed(1)} ${RING.toFixed(1)}" transform="rotate(-90 50 50)"/></svg>`;
+
+const bar = (pct) => `<span class="bg-progress-bar"><span style="width:${pct}%"></span></span>`;
+
+const pcard = (cls, ico, title, body, foot) => `
+<div class="bg-stat bg-pcard ${cls}">
+    <div class="bg-stat-head"><span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon(ico)}</span>${esc(title)}</span></div>
+    ${body}
+    ${foot ? `<div class="bg-stat-foot bg-mono">${foot}</div>` : ""}
+</div>`;
+
+const STATUS = {
+    ahead: (p) => `<b class="bg-accent">Опережаете на ${p.diff}</b>`,
+    behind: (p) => `<b class="bg-down">Отстаёте на ${p.diff}</b>`,
+    onTrack: () => `<b class="bg-accent">По графику</b>`,
+    done: () => `<b class="bg-accent">План выполнен</b>`,
+    missed: (p) => `<b class="bg-down">Не хватило ${p.remaining}</b>`,
+};
+
+function progress(P) {
+    if (!P) return "";
+    const books = ["книга", "книги", "книг"];
+    const cards = [];
+
+    // 1. план на год
+    if (P.plan) {
+        const p = P.plan;
+        cards.push(
+            pcard(
+                "bg-pcard--plan",
+                "badge",
+                `План на ${P.year}`,
+                `<div class="bg-plan"><div class="bg-ring-wrap">${ring(p.pct)}<span class="bg-ring-num bg-mono">${p.pct}%</span></div>
+                <div class="bg-plan-text"><div class="bg-stat-main"><span class="bg-stat-num">${P.count}</span><span class="bg-stat-unit">из ${p.goal}</span></div>
+                <div class="bg-plan-status bg-mono">${STATUS[p.status](p)}</div></div></div>`,
+                p.done
+                    ? `<span>Сверх плана: ${P.count - p.goal}</span>`
+                    : `<span>Осталось ${p.remaining}</span><span class="bg-accent">${p.need ? `нужно ${num1(p.need)} в месяц` : ""}</span>`
+            )
+        );
+    } else {
+        cards.push(
+            pcard(
+                "bg-pcard--plan bg-pcard--hint",
+                "badge",
+                "План на год",
+                `<div class="bg-pcard-hint">Задайте цель на год в настройках плагина («План на год») или параметром <code>yearGoal</code> в блоке — здесь появятся прогресс и прогноз.</div>`,
+                ""
+            )
+        );
+    }
+
+    if (P.count) {
+        // 2. темп и прогноз
+        const unit = P.finished ? "книги в месяц" : "к концу года";
+        const big = P.finished ? num1(P.count / 12) : P.forecast !== null ? `≈ ${P.forecast}` : "—";
+        const verdict =
+            P.plan && P.forecast !== null && !P.finished
+                ? P.forecast >= P.plan.goal
+                    ? `<span class="bg-accent">Успеете: прогноз выше плана</span>`
+                    : `<span class="bg-down">Не успеете при таком темпе</span>`
+                : "";
+        cards.push(
+            pcard(
+                "",
+                "trend",
+                P.finished ? "Темп года" : "Темп и прогноз",
+                `<div class="bg-stat-row"><div class="bg-stat-main"><span class="bg-stat-num">${big}</span><span class="bg-stat-unit">${unit}</span></div></div>`,
+                verdict || (P.perMonth ? `<span>Сейчас ${num1(P.perMonth)} ${plural(Math.round(P.perMonth), books)} в месяц</span>` : `<span>Мало данных для прогноза</span>`)
+            )
+        );
+
+        // 3. серия месяцев
+        const n = P.streak.current !== null ? P.streak.current : P.streak.longest;
+        const dots = P.read
+            .map((v, m) => `<i class="bg-dot-m${v ? " is-on" : ""}" title="${esc(monthShort(P.year, m))}"></i>`)
+            .join("");
+        cards.push(
+            pcard(
+                "",
+                "pulse",
+                "Серия чтения",
+                `<div class="bg-stat-row"><div class="bg-stat-main"><span class="bg-stat-num">${n}</span><span class="bg-stat-unit">${plural(n, ["месяц", "месяца", "месяцев"])} подряд</span></div></div>
+                <div class="bg-dots">${dots}</div>`,
+                `<span>${P.streak.current !== null ? "Текущая серия" : "Лучшая серия года"}</span><span class="bg-accent">рекорд года: ${P.streak.longest}</span>`
+            )
+        );
+
+        // 4. страницы
+        if (P.pages || P.pagesPlan) {
+            const pp = P.pagesPlan;
+            cards.push(
+                pcard(
+                    "",
+                    "file",
+                    "Страницы",
+                    `<div class="bg-stat-row"><div class="bg-stat-main"><span class="bg-stat-num">${fmtInt(P.pages || 0)}</span><span class="bg-stat-unit">стр${pp ? ` из ${fmtInt(pp.goal)}` : ""}</span></div></div>
+                    ${pp ? bar(pp.pct) : ""}`,
+                    `<span>${P.pagesPerDay ? `≈ ${fmtInt(P.pagesPerDay)} стр в день` : ""}</span><span class="bg-accent">${P.pagesPerBook ? `${fmtInt(P.pagesPerBook)} стр на книгу` : ""}</span>`
+                )
+            );
+        }
+
+        // 5. оценки
+        if (P.scored) {
+            const maxN = Math.max(1, ...Object.values(P.dist));
+            const row = (id, label) =>
+                `<button type="button" class="bg-dist-row" data-action="score" data-value="${id}" title="Показать книги с оценкой ${esc(label)}">
+                    <span class="bg-dist-k bg-mono">${label}</span>${bar(Math.round((P.dist[id] / maxN) * 100))}<span class="bg-dist-n bg-mono">${P.dist[id]}</span></button>`;
+            cards.push(
+                pcard(
+                    "bg-pcard--dist",
+                    "star",
+                    "Оценки года",
+                    `<div class="bg-dist">${row("5", "5★")}${row("4", "4★")}${row("3", "3★")}${row("2", "2★")}${row("low", "<2★")}</div>`,
+                    `<span>Средняя оценка</span><span class="bg-accent">${P.avg.toFixed(1)} ${icon("star", "bg-ico--fill bg-star")}</span>`
+                )
+            );
+        }
+
+        // 6. любимые жанр и автор
+        if (P.topGenre || P.topAuthor) {
+            const fav = (ico, label, top, field) =>
+                top
+                    ? `<button type="button" class="bg-fav" data-action="set-filter" data-field="${field}" data-value="${esc(top.name)}" title="Показать книги: ${esc(top.name)}">
+                        <span class="bg-fav-ico">${icon(ico)}</span><span class="bg-fav-body"><span class="bg-meta-k bg-mono">${label}</span><span class="bg-fav-name">${esc(top.name)}</span></span><span class="bg-fav-n bg-mono">${top.count}</span></button>`
+                    : "";
+            cards.push(
+                pcard("bg-pcard--fav", "shapes", "Чаще всего", `<div class="bg-favs">${fav("shapes", "Жанр", P.topGenre, "genre")}${fav("user", "Автор", P.topAuthor, "author")}</div>`, "")
+            );
+        }
+    }
+
+    return `<section class="bg-progress">${cards.join("")}</section>`;
+}
+
 function footer(total, ms, cov) {
     const loaded = `Book Gallery: загружено ${total} ${plural(total, ["запись", "записи", "записей"])} за ${Math.max(1, Math.round(ms))} мс`;
     const lost = cov && cov.set > cov.found ? cov.set - cov.found : 0;
@@ -283,4 +428,4 @@ function footer(total, ms, cov) {
     return `<div class="bg-footer bg-mono">${icon("database")}${loaded}${warn}</div>`;
 }
 
-module.exports = { header, stats, pulse, panel, tagChips, scoreChips, applied, footer, monthKey };
+module.exports = { header, stats, pulse, progress, panel, tagChips, scoreChips, applied, footer, monthKey };

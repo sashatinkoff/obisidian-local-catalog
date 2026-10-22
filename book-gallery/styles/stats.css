@@ -258,6 +258,223 @@
     color: var(--bg-text-3);
 }
 
+/* ---------- План на год: линия плана в «Пульсе» ---------- */
+.bg-root .bg-bar-goal {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 2px dashed var(--bg-star);
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+/* ---------- Инфокарточки о прогрессе ---------- */
+.bg-root .bg-progress {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+}
+
+.bg-root .bg-pcard {
+    justify-content: space-between;
+}
+
+.bg-root .bg-plan {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.bg-root .bg-ring-wrap {
+    position: relative;
+    flex: none;
+    width: 92px;
+    height: 92px;
+}
+
+.bg-root .bg-ring {
+    width: 100%;
+    height: 100%;
+}
+
+.bg-root .bg-ring-bg,
+.bg-root .bg-ring-fg {
+    fill: none;
+    stroke-width: 9;
+}
+
+.bg-root .bg-ring-bg {
+    stroke: var(--bg-chip);
+}
+
+.bg-root .bg-ring-fg {
+    stroke: var(--bg-accent);
+    stroke-linecap: round;
+}
+
+.bg-root .bg-ring-num {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--bg-text);
+}
+
+.bg-root .bg-plan-text {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.bg-root .bg-plan-status {
+    font-size: 12.5px;
+}
+
+.bg-root .bg-pcard-hint {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-pcard-hint code {
+    font-size: 12px;
+}
+
+.bg-root .bg-pcard--hint {
+    opacity: 0.85;
+}
+
+.bg-root .bg-progress-bar {
+    display: block;
+    flex: 1;
+    height: 8px;
+    min-width: 0;
+    border-radius: 4px;
+    background: var(--bg-chip);
+    overflow: hidden;
+}
+
+.bg-root .bg-pcard > .bg-progress-bar {
+    flex: none;
+    width: 100%;
+}
+
+.bg-root .bg-progress-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--bg-accent);
+}
+
+.bg-root .bg-dots {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.bg-root .bg-dot-m {
+    display: block;
+    height: 10px;
+    border-radius: 3px;
+    background: var(--bg-chip);
+}
+
+.bg-root .bg-dot-m.is-on {
+    background: var(--bg-accent);
+}
+
+.bg-root .bg-dist {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.bg-root .bg-dist-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 2px 4px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    box-shadow: none;
+    cursor: pointer;
+    color: var(--bg-text-2);
+}
+
+.bg-root .bg-dist-row:hover {
+    background: var(--bg-chip);
+}
+
+.bg-root .bg-dist-k {
+    flex: none;
+    width: 28px;
+    font-size: 12px;
+    text-align: left;
+}
+
+.bg-root .bg-dist-n {
+    flex: none;
+    width: 22px;
+    font-size: 12px;
+    text-align: right;
+}
+
+.bg-root .bg-favs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bg-root .bg-fav {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--bg-border);
+    border-radius: 10px;
+    background: var(--bg-surface-2);
+    box-shadow: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--bg-text);
+}
+
+.bg-root .bg-fav:hover {
+    border-color: var(--bg-accent-line);
+}
+
+.bg-root .bg-fav-ico {
+    flex: none;
+    color: var(--bg-accent);
+    font-size: 18px;
+}
+
+.bg-root .bg-fav-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+
+.bg-root .bg-fav-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-weight: 600;
+}
+
+.bg-root .bg-fav-n {
+    flex: none;
+    color: var(--bg-accent);
+}
+
 /* На узком экране карточки статистики листаются по горизонтали */
 @container (max-width: 640px) {
     .bg-root .bg-stats {

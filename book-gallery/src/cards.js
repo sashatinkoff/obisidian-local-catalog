@@ -82,12 +82,7 @@ function fill(el, c) {
     };
     if (el.dataset.role === "insight") {
         set(".bg-insight-text", showText(c));
-        const link = el.querySelector(".bg-insight-link");
-        if (link) {
-            link.dataset.path = c.path;
-            link.lastChild.textContent = c.name;
-        }
-        return;
+        return; // подпись под инсайтом — книга и автор, она не меняется
     }
     set(".bg-quote-text", showText(c));
     set(".bg-cap-text", captionOf(c));
@@ -103,11 +98,13 @@ function fill(el, c) {
 // ---------- два варианта вёрстки ----------
 const kindClass = (kind) => (kind === "featured" ? " bg-card--featured" : kind === "low" ? " bg-card--low" : "");
 
-// Узкая вертикальная карточка: обложка забирает всё свободное место
-function tall(b, kind) {
+// Вертикальная карточка. Высота зависит от содержимого: пропорции обложки (ratio — высота к ширине)
+// и объёма текста. big — «большой» вариант: полная цитата с комментарием вместо короткого фрагмента
+function tall(b, kind, opts) {
+    const o = opts || {};
     const flag = kind === "low" ? `<span class="bg-cover-flag bg-mono">${esc(cfg.lowLabel)}</span>` : "";
     return `
-<article class="bg-card bg-card--tall${kindClass(kind)}" style="--span:1" ${openAttrs(b.path)}>
+<article class="bg-card bg-card--tall${o.big ? " bg-card--big" : ""}${kindClass(kind)}" style="--ratio:${o.ratio || 1.5}" ${openAttrs(b.path)}>
     ${coverHtml(b, { overlay: flag })}
     <div class="bg-card-body">
         <div class="bg-card-meta">
@@ -116,7 +113,7 @@ function tall(b, kind) {
         </div>
         <div class="bg-card-title">${esc(b.title)}</div>
         <div class="bg-card-author">${esc(b.authorText || "Неизвестен")}</div>
-        ${snippet(b)}
+        ${o.big ? bigQuote(b) : snippet(b)}
         ${statsRow(b)}
     </div>
 </article>`;
@@ -143,7 +140,7 @@ function wide(b, kind) {
             : `<div class="bg-tags-plain">${b.tags.slice(0, 4).map((t) => `<span class="bg-tag-plain bg-mono">${esc(t)}</span>`).join("")}</div>`;
 
     return `
-<article class="bg-card bg-card--wide${kindClass(kind)}" style="--span:2" ${openAttrs(b.path)}>
+<article class="bg-card bg-card--wide${kindClass(kind)}" ${openAttrs(b.path)}>
     ${coverHtml(b, { tag: false, overlay: kind === "low" ? `<span class="bg-cover-flag bg-mono">${esc(cfg.lowLabel)}</span>` : "" })}
     <div class="bg-card-body">
         <div class="bg-card-meta">
@@ -159,39 +156,20 @@ function wide(b, kind) {
 </article>`;
 }
 
-// Компактная карточка (две такие складываются в «стопку» в одной колонке): обложка слева, текст справа
-function compact(b) {
-    const tags = b.tags.slice(0, 2).map((t) => `<span class="bg-tag-plain bg-mono">${esc(t)}</span>`).join("");
-    return `
-<article class="bg-card bg-card--compact" ${openAttrs(b.path)}>
-    ${coverHtml(b, { tag: false })}
-    <div class="bg-card-body">
-        <div class="bg-card-meta">
-            ${genreHtml(b)}
-        </div>
-        <div class="bg-card-title">${esc(b.title)}</div>
-        <div class="bg-card-author">${esc(b.authorText || "Неизвестен")}</div>
-        <div class="bg-card-foot"><span class="bg-date bg-mono">${esc(b.dateText)}</span>${tags ? `<div class="bg-tags-plain">${tags}</div>` : ""}</div>
-    </div>
-</article>`;
-}
-
-// Две компактные карточки друг над другом занимают одну колонку полосы
-const stack = (a, b) => `<div class="bg-stack" style="--span:1">${compact(a)}${compact(b)}</div>`;
-
 // ---------- отбор ----------
 // Достаточно ли у книги текста для большой карточки
 const isEligible = (b) => Notes.textLength(b) >= cfg.bigMinChars;
 
 const isLow = (b) => b.score5 !== null && b.score5 < cfg.lowScore;
 
-// Главная карточка: лучшая по оценке книга выборки с достаточным текстом (при равенстве — самая свежая)
+// Главная карточка: лучшая по оценке книга выборки с достаточным текстом.
+// При равной оценке побеждает книга с большим числом заметок, затем самая свежая
 function pickFeatured(list) {
     if (!cfg.featured) return null;
     return (
         list
             .filter((b) => isEligible(b) && b.score5 !== null && b.score5 >= cfg.featuredMinScore)
-            .sort((a, b) => b.score5 - a.score5 || b.dateMs - a.dateMs)[0] || null
+            .sort((a, b) => b.score5 - a.score5 || (b.notes || 0) - (a.notes || 0) || b.dateMs - a.dateMs)[0] || null
     );
 }
 
@@ -212,93 +190,60 @@ function pickBig(list, top) {
     return big;
 }
 
-// ---------- раскладка ----------
-// Разложить карточки по полосам из cols колонок. Для каждой карточки задан набор допустимых ширин
-// (allowed) и цена выбора (cost). Динамический расчёт подбирает ширины и небольшие перестановки
-// (карточку можно поставить раньше соседних, но не дальше WINDOW-1 позиций) так, чтобы каждая полоса
-// заполнилась ровно. Сначала сводится к минимуму пустое место в конце, затем цена выбора и сдвиги.
-// Карточки не растягиваются шире двух колонок. locked-карточку (главную) переставлять нельзя.
-const WINDOW = 5;
-const SHIFT_COST = 0.4;
+// ---------- раскладка: staggered grid ----------
+// Колонки одинаковой ширины, карточки разной высоты. Сетка — CSS Grid с мелкими строками (UNIT px):
+// высота каждой карточки измеряется, и она занимает столько строк, сколько ей нужно (grid-row-end: span N).
+// Режим dense кладёт каждую следующую карточку в самое высокое свободное место, то есть в самую низкую колонку.
+// Широкие карточки занимают две колонки и встречаются реже (wideShare).
+const NOMINAL_W = 300;  // ширина колонки, на которую рассчитана оценка высоты до измерения
+const UNIT = 4;         // высота строки сетки, px
+const GAP = 16;
+const RATIOS = [1.3, 1.5, 1.7]; // пропорции обложек (высота к ширине): их чередование даёт «ступеньки»
 
-function plan(items, cols) {
-    const n = items.length;
-    const memo = new Map();
+const hashOf = (s) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h;
+};
 
-    // f(i, mask, u): i — первая ещё не размещённая карточка, бит b в mask — карточка i+1+b уже размещена,
-    // u — сколько колонок занято в текущей полосе
-    function f(i, mask, u) {
-        if (i >= n) return { empty: u === 0 ? 0 : cols - u, cost: 0, move: null };
-        const key = i * 4096 + mask * 8 + u; // u < 8, mask < 512
-        if (memo.has(key)) return memo.get(key);
+// Примерная высота карточки в пикселях — для первой отрисовки, до измерения
+function estimate(t) {
+    if (t.wide) return t.kind === "featured" ? 440 : 340;
+    const c = Notes.content(t.b);
+    const chars = c ? c.quote.length : 0;
+    const cover = NOMINAL_W * t.ratio;
+    const titleLines = Math.min(2, Math.ceil(t.b.title.length / 22));
+    let text = 0;
+    if (t.big && c) text = 44 + Math.min(7, Math.ceil(chars / 34)) * 21 + (c.comment ? 44 : 0);
+    else if (c) text = 22 + Math.min(3, Math.ceil(chars / 34)) * 19;
+    const stats = t.b.notes || t.b.label ? 40 : 0;
+    return 28 + cover + 14 + 18 + titleLines * 22 + 20 + (text ? text + 14 : 0) + stats + 14;
+}
 
-        let best = null;
-        for (let k = 0; k < WINDOW && i + k < n; k++) {
-            if (k > 0) {
-                if (mask & (1 << (k - 1))) continue; // уже размещена
-                if (items[i + k - 1].locked && !(k > 1 && mask & (1 << (k - 2)))) continue;
-            }
-            // нельзя перепрыгивать через закреплённую (главную) карточку
-            let blocked = false;
-            for (let t = 0; t < k; t++) {
-                const placed = t > 0 && mask & (1 << (t - 1));
-                if (!placed && items[i + t].locked) blocked = true;
-            }
-            if (blocked) continue;
+const spanFor = (h, gap) => Math.max(1, Math.ceil((h + gap) / UNIT));
 
-            const item = items[i + k];
-            for (const span of item.allowed) {
-                if (u + span > cols) continue;
-                let ni = i, nm = mask;
-                if (k === 0) {
-                    ni = i + 1;
-                    while (nm & 1) {
-                        nm >>= 1;
-                        ni++;
-                    }
-                    nm >>= 1;
-                } else {
-                    nm = mask | (1 << (k - 1));
-                }
-                const next = f(ni, nm, (u + span) % cols);
-                if (!next) continue;
-                const cand = { empty: next.empty, cost: next.cost + item.cost(span) + SHIFT_COST * k, move: { k, span, ni, nm } };
-                if (!best || cand.empty < best.empty || (cand.empty === best.empty && cand.cost < best.cost)) best = cand;
-            }
-        }
-        memo.set(key, best);
-        return best;
+// Какие книги получают широкую карточку (кроме «Книги года»): «Разочарование» и лучшие по оценке из книг
+// с достаточным текстом, но не больше wideShare от списка, не ближе MIN_GAP позиций друг к другу и не в самом хвосте
+const MIN_GAP = 5;
+function pickWide(list, top, cols) {
+    const wide = new Set();
+    const share = Math.max(0, Math.min(1, Number(cfg.wideShare) || 0));
+    const target = Math.floor(list.length * share);
+    if (!target) return wide;
+    const index = new Map(list.map((b, i) => [b, i]));
+    const taken = [];
+    const candidates = list
+        // в конце списка широкая карточка оставила бы дыру рядом с собой: заполнять её уже нечем
+        .filter((b) => b !== top && isEligible(b) && index.get(b) < list.length - (cols + 2))
+        .sort((a, b) => (isLow(b) ? 1 : 0) - (isLow(a) ? 1 : 0) || (b.score5 ?? -1) - (a.score5 ?? -1) || Notes.textLength(b) - Notes.textLength(a));
+    for (const b of candidates) {
+        if (wide.size >= target) break;
+        const i = index.get(b);
+        if (taken.some((j) => Math.abs(i - j) < MIN_GAP)) continue; // широкие карточки не идут подряд
+        wide.add(b);
+        taken.push(i);
     }
-
-    // Восстановить порядок и ширины по найденным ходам
-    const placed = [];
-    let i = 0, mask = 0, u = 0;
-    for (let guard = 0; guard <= n + 1; guard++) {
-        const r = f(i, mask, u);
-        if (!r || !r.move) break;
-        const { k, span, ni, nm } = r.move;
-        placed.push({ item: items[i + k], span });
-        u = (u + span) % cols;
-        i = ni;
-        mask = nm;
-    }
-    // запасной вариант (не должен понадобиться): всё в одну колонку
-    const result = placed.length === n ? placed : items.map((item) => ({ item, span: 1 }));
-
-    const bands = [];
-    let band = [];
-    let used = 0;
-    for (const cell of result) {
-        band.push(cell);
-        used += cell.span;
-        if (used >= cols) {
-            bands.push(band);
-            band = [];
-            used = 0;
-        }
-    }
-    if (band.length) bands.push(band);
-    return bands;
+    return wide;
 }
 
 function grid(list, cols) {
@@ -306,65 +251,123 @@ function grid(list, cols) {
     const c = Math.max(2, cols || 4);
 
     const top = pickFeatured(list);
-    const preferred = pickBig(list, top);
-    // главная карточка идёт первой, остальные — в порядке сортировки
+    const wides = pickWide(list, top, c);
+    const big = pickBig(list, top);
+    // главная карточка первая, остальные — в порядке сортировки
     const ordered = top ? [top, ...list.filter((b) => b !== top)] : list;
 
-    // «Стопки»: книги с небольшим текстом (им большая карточка не положена) через одну объединяются в пары
-    // с ближайшей такой же книгой впереди — не дальше WINDOW позиций, чтобы не ломать порядок сортировки
-    const paired = new Map(); // первая книга пары -> вторая
-    const used = new Set();
-    if (cfg.compactPairs !== false) {
-        const canPair = (b) => b !== top && !isEligible(b) && !isLow(b);
-        let take = true; // пары образуются через одну, остальные остаются высокими карточками
-        for (let i = 0; i < ordered.length; i++) {
-            const a = ordered[i];
-            if (used.has(a) || !canPair(a)) continue;
-            let mate = null;
-            for (let j = i + 1; j < ordered.length && j <= i + WINDOW && !mate; j++) {
-                if (!used.has(ordered[j]) && canPair(ordered[j])) mate = ordered[j];
-            }
-            if (!mate) continue;
-            if (take) {
-                paired.set(a, mate);
-                used.add(a);
-                used.add(mate);
-            }
-            take = !take;
-        }
-    }
-
-    const items = ordered.filter((b) => !used.has(b) || paired.has(b)).map((b) => {
-        if (paired.has(b)) return { b, mate: paired.get(b), kind: "pair", allowed: [1], cost: () => 0, locked: false };
-        const kind = b === top ? "featured" : isLow(b) ? "low" : "normal";
-        let allowed, cost;
-        if (b === top) {
-            allowed = [2];
-            cost = () => 0;
-        } else if (!isEligible(b)) {
-            allowed = [1]; // мало текста — большой карточки не будет
-            cost = () => 0;
-        } else if (preferred.has(b)) {
-            allowed = [1, 2];
-            cost = (s) => (s === 2 ? 0 : 2);
-        } else {
-            allowed = [1, 2];
-            cost = (s) => (s === 2 ? 1 : 0);
-        }
-        return { b, kind, allowed, cost, locked: b === top }; // главная карточка всегда первая
-    });
-
-    const html = plan(items, c)
-        .map((band) => {
-            const wideOnly = band.every((x) => x.span >= 2);
-            const single = band.length === 1;
-            const cards = band
-                .map(({ item, span }) => (item.kind === "pair" ? stack(item.b, item.mate) : span >= 2 ? wide(item.b, item.kind) : tall(item.b, item.kind)))
-                .join("");
-            return `<div class="bg-band${wideOnly ? " bg-band--wide" : ""}${single ? " bg-band--single" : ""}" style="--cols:${c}">${cards}</div>`;
+    const html = ordered
+        .map((b, index) => {
+            const kind = b === top ? "featured" : isLow(b) ? "low" : "normal";
+            const isWide = b === top || wides.has(b);
+            const isBig = !isWide && big.has(b) && isEligible(b);
+            // большая карточка получает более короткую обложку: на текст остаётся больше места
+            const ratio = isBig ? 1.2 : RATIOS[hashOf(b.path) % RATIOS.length];
+            const t = { b, kind, wide: isWide, big: isBig, ratio, index };
+            const card = isWide ? wide(b, kind) : tall(b, kind, t);
+            // стартовая высота по оценке; после вставки в страницу relayout() заменит её измеренной
+            const span = `grid-row-end:span ${spanFor(estimate(t), GAP)}`;
+            return card.includes(' style="') ? card.replace(' style="', ` style="${span};`) : card.replace("<article ", `<article style="${span}" `);
         })
         .join("");
-    return `<div class="bg-bento">${html}</div>`;
+    return `<div class="bg-stagger" style="--cols:${c}">${html}</div>`;
 }
 
-module.exports = { grid, pickFeatured, quoteText, fill, plan };
+// Подогнать сетку под реальные высоты карточек: вызывается после вставки HTML, после дочитывания текстов
+// и при изменении ширины блока. Меняет только grid-row-end (и только если значение изменилось).
+// Затем закрывает щели рядом с широкими карточками: рядом с широкой карточкой колонки могут оказаться
+// разной высоты, и в более низкой остаётся пустое место. Карточка над ним растягивается (растёт обложка).
+function relayout(root) {
+    const st = root && root.querySelector(".bg-stagger");
+    if (!st || !st.offsetWidth) return;
+    const gap = parseFloat(getComputedStyle(st).columnGap) || GAP;
+    const cards = [...st.children];
+
+    // растяжения прошлой раскладки сбрасываем: измерять надо естественную высоту
+    cards.forEach((card) => {
+        if (card.dataset.stretch) {
+            card.style.height = "";
+            card.classList.remove("is-stretched");
+            delete card.dataset.stretch;
+        }
+    });
+
+    cards.forEach((c) => c.classList.remove("is-solo"));
+
+    const setSpans = (list) => {
+        // сначала читаем все высоты, потом пишем: без перемешивания чтения и записи браузер не пересчитывает раскладку на каждой карточке
+        const heights = list.map((card) => card.getBoundingClientRect().height);
+        list.forEach((card, i) => {
+            const value = `span ${spanFor(heights[i], gap)}`;
+            if (card.style.gridRowEnd !== value) card.style.gridRowEnd = value;
+        });
+    };
+    setSpans(cards);
+
+    const wides = cards.filter((c) => c.classList.contains("bg-card--wide"));
+    if (!wides.length) return;
+
+    const stretchPass = () => {
+        // После растяжения сетка перестраивается, поэтому щели ищем заново — несколько проходов
+        for (let pass = 0; pass < 4; pass++) {
+            const rects = new Map(cards.map((c) => [c, c.getBoundingClientRect()]));
+            const stretched = new Map();
+            for (const w of wides) {
+                if (w.classList.contains("is-solo")) continue;
+                const wr = rects.get(w);
+                const above = new Map();
+                for (const a of cards) {
+                    if (a === w) continue;
+                    const ar = rects.get(a);
+                    if (ar.left < wr.left - 1 || ar.right > wr.right + 1 || ar.bottom > wr.top + 1) continue;
+                    const key = Math.round(ar.left);
+                    if (!above.has(key) || ar.bottom > rects.get(above.get(key)).bottom) above.set(key, a);
+                }
+                for (const a of above.values()) {
+                    const hole = wr.top - rects.get(a).bottom - gap;
+                    if (hole > 6) stretched.set(a, Math.max(stretched.get(a) || 0, hole));
+                }
+            }
+            if (!stretched.size) break;
+            for (const [a, hole] of stretched) {
+                a.style.height = `${rects.get(a).height + hole}px`;
+                a.classList.add("is-stretched");
+                a.dataset.stretch = "1";
+            }
+            setSpans([...stretched.keys()]);
+        }
+    };
+
+    // Остаточные дыры по колонкам: широкая карточка, над которой они остались, становится обычной одноколоночной
+    const holeWides = () => {
+        const rects = new Map(cards.map((c) => [c, c.getBoundingClientRect()]));
+        const top = st.getBoundingClientRect().top;
+        const bad = new Set();
+        const xs = [...new Set([...rects.values()].map((r) => Math.round(r.left)))];
+        for (const x of xs) {
+            const col = cards.filter((c) => { const r = rects.get(c); return r.left - 1 <= x && r.right + 1 >= x + 10; })
+                .sort((a, b) => rects.get(a).top - rects.get(b).top);
+            let prev = top;
+            for (const c of col) {
+                const r = rects.get(c);
+                if (r.top - prev > 60 && c.classList.contains("bg-card--wide")) bad.add(c);
+                prev = Math.max(prev, r.bottom);
+            }
+        }
+        return [...bad];
+    };
+
+    stretchPass();
+    for (let round = 0; round < 6; round++) {
+        const bad = holeWides();
+        if (!bad.length) break;
+        bad.forEach((c) => c.classList.add("is-solo"));
+        cards.forEach((card) => {
+            if (card.dataset.stretch) { card.style.height = ""; card.classList.remove("is-stretched"); delete card.dataset.stretch; }
+        });
+        setSpans(cards);
+        stretchPass();
+    }
+}
+
+module.exports = { grid, relayout, pickFeatured, quoteText, fill };

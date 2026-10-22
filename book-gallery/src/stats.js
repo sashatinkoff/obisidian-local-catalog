@@ -87,6 +87,108 @@ function pulse(books, year) {
     };
 }
 
+// План на год для выбранного года: свой (yearGoals) или общий (yearGoal)
+function goalFor(year, cfg) {
+    const own = cfg.yearGoals && Number(cfg.yearGoals[year]);
+    return own > 0 ? own : Number(cfg.yearGoal) > 0 ? Number(cfg.yearGoal) : 0;
+}
+
+const topOf = (books, pick) => {
+    const counts = new Map();
+    books.forEach((b) => pick(b).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1)));
+    const sorted = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"));
+    return sorted.length ? { name: sorted[0][0], count: sorted[0][1] } : null;
+};
+
+// Показатели прогресса за год: план, темп, прогноз, серия месяцев, страницы, оценки, любимые жанр и автор
+function progress(books, year, opts) {
+    const o = opts || {};
+    const now = o.now || new Date();
+    const goal = o.goal > 0 ? o.goal : 0;
+    const goalPages = o.goalPages > 0 ? o.goalPages : 0;
+    const inYear = books.filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year);
+    const count = inYear.length;
+    const pages = inYear.reduce((s, b) => s + (b.pages || 0), 0);
+
+    // какая часть года прошла: 0 — год впереди, 1 — завершён
+    const start = new Date(year, 0, 1).getTime();
+    const end = new Date(year + 1, 0, 1).getTime();
+    const cy = now.getFullYear();
+    const frac = year < cy ? 1 : year > cy ? 0 : Math.min(1, Math.max(0, (now.getTime() - start) / (end - start)));
+    const finished = frac >= 1;
+
+    // серия месяцев с прочитанными книгами
+    const read = Array(12).fill(false);
+    inYear.forEach((b) => (read[new Date(b.dateMs).getMonth()] = true));
+    let longest = 0, run = 0;
+    read.forEach((v) => {
+        run = v ? run + 1 : 0;
+        longest = Math.max(longest, run);
+    });
+    let current = null;
+    if (year === cy) {
+        let m = now.getMonth();
+        if (!read[m]) m--; // текущий месяц ещё без книг — серия считается с прошлого
+        current = 0;
+        while (m >= 0 && read[m]) {
+            current++;
+            m--;
+        }
+    }
+
+    // план
+    const plan = goal
+        ? (() => {
+              const expected = goal * frac;
+              const ahead = count - expected;
+              const monthsLeft = 12 * (1 - frac);
+              const remaining = Math.max(0, goal - count);
+              return {
+                  goal,
+                  pct: Math.min(100, Math.round((count / goal) * 100)),
+                  remaining,
+                  done: count >= goal,
+                  // «по графику» — в пределах полкниги от равномерного темпа
+                  status: finished ? (count >= goal ? "done" : "missed") : ahead >= 0.5 ? "ahead" : ahead <= -0.5 ? "behind" : "onTrack",
+                  diff: Math.round(Math.abs(ahead)),
+                  need: !finished && remaining > 0 && monthsLeft > 0.05 ? remaining / monthsLeft : null,
+              };
+          })()
+        : null;
+
+    const perMonth = frac > 0.02 ? count / Math.max(frac * 12, 0.5) : null;
+    const forecast = frac > 0.02 && frac < 1 ? Math.round(count / frac) : null;
+
+    // страницы
+    const pagesPlan = goalPages
+        ? { goal: goalPages, pct: Math.min(100, Math.round((pages / goalPages) * 100)), perDay: null }
+        : null;
+    const daysElapsed = Math.max(1, Math.round(frac * (end - start) / 86400000));
+
+    // оценки по целым звёздам (как в фильтре)
+    const dist = { "5": 0, "4": 0, "3": 0, "2": 0, low: 0 };
+    let scored = 0, sum = 0;
+    inYear.forEach((b) => {
+        if (b.score5 === null) return;
+        scored++;
+        sum += b.score5;
+        const stars = Math.min(5, Math.floor(b.score5 + 1e-9));
+        dist[stars >= 2 ? String(stars) : "low"]++;
+    });
+
+    return {
+        year, count, finished, frac, plan, perMonth, forecast, read,
+        streak: { current, longest },
+        pages: pages || null,
+        pagesPerDay: pages ? Math.round(pages / daysElapsed) : null,
+        pagesPerBook: pages && inYear.filter((b) => b.pages).length ? Math.round(pages / inYear.filter((b) => b.pages).length) : null,
+        pagesPlan,
+        dist, scored, avg: scored ? sum / scored : null,
+        topGenre: topOf(inYear, (b) => b.genres),
+        topAuthor: topOf(inYear, (b) => b.authors),
+    };
+}
+
 // Книга для «инсайта месяца»: лучшая по оценке книга месяца, у которой есть заметки или цитата;
 // если таких нет — лучшая среди всех. Сам текст выбирает случайно lib/notes.js
 function insight(books, stats) {
@@ -98,4 +200,4 @@ function insight(books, stats) {
     return book ? { book } : null;
 }
 
-module.exports = { compute, insight, pulse, years };
+module.exports = { compute, insight, pulse, years, progress, goalFor };

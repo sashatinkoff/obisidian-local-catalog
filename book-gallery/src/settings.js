@@ -92,13 +92,18 @@ const SECTIONS = [
         ["sourceField", "text", "Свойство «Источник»", "В заметке-цитате указывает на книгу."],
         ["notesFolder", "text", "Папка заметок-цитат", "Где искать заметки со свойством «Источник». Начните вводить — появятся папки хранилища; пусто — всё хранилище."],
     ]],
+    ["План на год", [
+        ["yearGoal", "text", "Книг за год", "Цель на год для инфографики: прогресс, прогноз, пунктир плана в «Пульсе». 0 — не задана."],
+        ["yearGoalPages", "text", "Страниц за год", "Необязательно. 0 — не задана."],
+        ["showProgress", "toggle", "Инфокарточки о прогрессе"],
+    ]],
     ["Оформление", [
         ["title", "text", "Заголовок", "Пусто — не показывать."],
         ["showStats", "toggle", "Блок «месяц + инсайт»"],
         ["showPulse", "toggle", "Виджет «Пульс года»"],
         ["tagsCollapsed", "toggle", "Панель тегов свёрнута"],
         ["featured", "toggle", "Главная карточка для лучшей книги"],
-        ["compactPairs", "toggle", "Бенто: стопки компактных карточек", "Две книги с небольшим текстом — в одной колонке друг над другом."],
+        ["wideShare", "text", "Доля широких карточек", "От 0 до 1: сколько карточек занимают две колонки (кроме «Книги года»). 0 — без широких."],
         ["bigShare", "text", "Доля больших карточек", "От 0 до 1."],
         ["bigMinChars", "text", "Минимум текста для большой карточки", "Символов."],
         ["coverFromBody", "toggle", "Обложка из текста заметки", "Если файла из свойства обложки нет — взять первую картинку из заметки."],
@@ -111,6 +116,7 @@ const SECTIONS = [
         ["openInNewTab", "toggle", "Открывать заметки в новой вкладке"],
         ["defaultView", "dropdown", "Вид по умолчанию", "", { cards: "Карточки", list: "Список" }],
         ["defaultSort", "dropdown", "Сортировка по умолчанию", "", SORT_OPTIONS],
+        ["coverFit", "dropdown", "Обложки в карточках", "", { cover: "Заполнить (обрезать по краям)", contain: "Показать целиком" }],
         ["tagMode", "dropdown", "Режим тегов", "", { any: "Любой из выбранных", all: "Все выбранные" }],
     ]],
 ];
@@ -152,6 +158,7 @@ class BookGallerySettingTab extends PluginSettingTab {
                         t.setValue(cur === null || cur === undefined ? "" : String(cur)).onChange((v) => {
                             const text = isFolder ? v.trim().replace(/^\/+|\/+$/g, "") : v;
                             S[key] = key === "filterValue" ? parseFlag(v) : key === "notesFolder" ? text || null : text;
+                            if (key === "yearGoal" || key === "yearGoalPages") S[key] = Math.max(0, parseInt(String(v).replace(/\D/g, ""), 10) || 0);
                             save();
                         });
                         if (isFolder && t.setPlaceholder) t.setPlaceholder("Всё хранилище");

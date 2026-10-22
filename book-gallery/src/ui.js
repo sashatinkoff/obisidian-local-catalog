@@ -118,11 +118,12 @@ async function mount(container, books, opts) {
 
     let timer; // задержка поиска
 
-    const root = U.el("div", "bg-root");
+    const root = U.el("div", cfg.coverFit === "contain" ? "bg-root bg-root--fit-contain" : "bg-root");
     root.innerHTML =
         T.header(books.length) +
         T.stats(stats, insight) +
         `<div data-zone="pulse"></div>` +
+        `<div data-zone="progress"></div>` +
         T.panel({ authors: uniqueValues(books, "authors"), genres: uniqueValues(books, "genres"), view, tagsOpen }) +
         `<div class="bg-results" data-zone="results"></div>` +
         (cfg.showFooter ? T.footer(books.length, loadMs, books.coverStats) : "");
@@ -131,6 +132,7 @@ async function mount(container, books, opts) {
     const zone = (name) => root.querySelector(`[data-zone="${name}"]`);
     const zones = {
         pulse: zone("pulse"),
+        progress: zone("progress"),
         badge: zone("badge"),
         tagcount: zone("tagcount"),
         scores: zone("scores"),
@@ -152,17 +154,29 @@ async function mount(container, books, opts) {
 
     let lastList = [];
     let cols = 0;
+    let lastW = 0; // ширина блока при последней раскладке: по ней понимаем, что высоты карточек надо измерить заново
 
     // ---------- отрисовка ----------
     function renderPulse() {
-        zones.pulse.innerHTML = cfg.showPulse && years.length ? T.pulse(Stats.pulse(books, pulseYear), state.month) : "";
+        const goal = years.length ? Stats.goalFor(pulseYear, cfg) : 0;
+        zones.pulse.innerHTML = cfg.showPulse && years.length ? T.pulse(Stats.pulse(books, pulseYear), state.month, goal ? goal / 12 : 0) : "";
+        // инфокарточки о прогрессе: за тот же год, что выбран в «Пульсе»; без книг показываем только план
+        zones.progress.innerHTML =
+            cfg.showProgress !== false && (years.length || cfg.yearGoal > 0)
+                ? T.progress(Stats.progress(books, pulseYear || new Date().getFullYear(), { goal, goalPages: Number(cfg.yearGoalPages) || 0 }))
+                : "";
     }
 
     function renderResults() {
         cols = colsFor(zones.results.clientWidth || root.clientWidth || 1000, cols);
         zones.results.innerHTML = view === "cards" ? Cards.grid(lastList, cols) : List.table(lastList, state.tags);
+        lastW = zones.results.clientWidth;
+        if (view === "cards") Cards.relayout(zones.results); // высоты карточек по факту
         Thumbs.hydrate(zones.results);              // уменьшенные обложки
-        Notes.hydrate(zones.results, Cards.fill);   // тексты, которые не успели прочитаться заранее
+        // тексты, которые не успели прочитаться заранее; после них высоты меняются — подгоняем сетку ещё раз
+        Notes.hydrate(zones.results, Cards.fill).then(() => {
+            if (view === "cards" && zones.results.isConnected) Cards.relayout(zones.results);
+        });
     }
 
     function update() {
@@ -191,8 +205,17 @@ async function mount(container, books, opts) {
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
                 if (!root.isConnected) return observer.disconnect();
-                const next = colsFor(zones.results.clientWidth || root.clientWidth || 1000, cols);
-                if (view !== "cards" || next === cols) return;
+                const w = zones.results.clientWidth || root.clientWidth || 1000;
+                const next = colsFor(w, cols);
+                if (view !== "cards") return;
+                if (next === cols) {
+                    // число колонок то же, но ширина изменилась: тексты переносятся иначе, высоты надо измерить заново
+                    if (Math.abs(w - lastW) >= 1) {
+                        lastW = w;
+                        Cards.relayout(zones.results);
+                    }
+                    return;
+                }
                 const now = Date.now();
                 while (relayouts.length && now - relayouts[0] > 3000) relayouts.shift();
                 if (relayouts.length >= 6) return observer.disconnect(); // слишком часто — перестаём следить
@@ -300,6 +323,17 @@ async function mount(container, books, opts) {
                 root.querySelector('[data-filter="author"]').value = "all";
                 root.querySelector('[data-filter="genre"]').value = "all";
                 update();
+                return;
+            }
+            if (action === "set-filter") {
+                // клик по «любимому» жанру или автору включает соответствующий фильтр
+                const field = actionEl.dataset.field;
+                if (field === "author" || field === "genre") {
+                    state[field] = state[field] === actionEl.dataset.value ? "all" : actionEl.dataset.value;
+                    const select = root.querySelector(`[data-filter="${field}"]`);
+                    if (select) select.value = state[field];
+                    update();
+                }
                 return;
             }
             if (action === "reroll") {
