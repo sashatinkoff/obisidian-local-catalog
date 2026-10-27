@@ -1,0 +1,68 @@
+/* 65-stats.css — экран «Статистика»: плитки-итоги, столбчатые диаграммы, рекорды, самые длинные записи. */
+.sf-stats { display: flex; flex-direction: column; gap: var(--sf-gutter); min-width: 0; }
+.sf-stats__lead { margin: 0; color: var(--sf-text-2); }
+.sf-stats__period { display: flex; }
+
+.sf-statiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sf-gutter); }
+.sf-statile { display: flex; flex-direction: column; gap: 4px; padding: var(--sf-pad); border-radius: var(--sf-r-xl); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); min-width: 0; }
+.sf-statile strong { font-family: var(--sf-font-head); font-size: 30px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em; color: var(--sf-primary); }
+.sf-statile.is-secondary strong { color: var(--sf-secondary, var(--sf-primary)); }
+.sf-statile.is-tertiary strong { color: var(--sf-tertiary, var(--sf-primary)); }
+.sf-statile span { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.sf-statgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sf-gutter); }
+
+/* столбчатые диаграммы */
+.sf-bars { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sf-bars__plot { display: grid; grid-template-columns: repeat(var(--bars), minmax(0, 1fr)); align-items: end; gap: 3px; }
+.sf-bars__col { display: flex; align-items: flex-end; height: 100%; min-width: 0; }
+.sf-bars__bar { width: 100%; border-radius: 6px 6px 3px 3px; background: var(--sf-primary-soft); box-shadow: inset 0 0 0 1px var(--sf-primary-line); transition: filter 0.15s; }
+.sf-bars__col:hover .sf-bars__bar { filter: brightness(1.25); }
+.sf-bars__col.is-peak .sf-bars__bar { background: var(--sf-accent-grad); box-shadow: var(--sf-glow); }
+.sf-bars__col.is-zero .sf-bars__bar { opacity: 0.5; }
+.sf-bars__axis { display: grid; grid-template-columns: repeat(var(--bars), minmax(0, 1fr)); gap: 3px; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); text-align: center; }
+.sf-bars__tick { min-width: 0; overflow: visible; white-space: nowrap; }
+.sf-bars__tick.is-hidden { visibility: hidden; }
+.sf-bars--years .sf-bars__tick { font-size: 10px; }
+
+/* рекорды */
+.sf-recs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--sf-gutter); }
+.sf-rec { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: var(--sf-pad); border-radius: var(--sf-r-xl); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); text-align: left; min-width: 0; color: var(--sf-text); }
+.sf-rec.is-clickable { cursor: pointer; }
+.sf-rec.is-clickable:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); }
+.sf-rec__icon { display: inline-flex; width: 34px; height: 34px; align-items: center; justify-content: center; border-radius: 50%; background: var(--sf-primary-soft); color: var(--sf-primary); margin-bottom: 4px; }
+.sf-rec__label { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); text-transform: uppercase; letter-spacing: 0.04em; }
+.sf-rec__value { font-family: var(--sf-font-head); font-size: 20px; line-height: 26px; font-weight: 600; overflow-wrap: anywhere; }
+.sf-rec__sub { font-size: 12px; line-height: 17px; color: var(--sf-text-2); overflow-wrap: anywhere; }
+
+/* самые длинные записи */
+.sf-longest__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sf-longest__btn { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 8px 10px; border-radius: var(--sf-r); text-align: left; color: var(--sf-text); background: none; }
+.sf-longest__btn:hover { background: var(--sf-surface-2); }
+.sf-longest__n { flex: none; width: 22px; font-family: var(--sf-font-mono); font-size: 12px; color: var(--sf-text-3); padding-top: 2px; }
+.sf-longest__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.sf-longest__title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-longest__meta { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+.sf-longest__bar { display: block; height: 4px; border-radius: 2px; background: var(--sf-primary-soft); overflow: hidden; }
+.sf-longest__bar i { display: block; height: 100%; border-radius: 2px; background: var(--sf-accent-grad); }
+.sf-longest__row--skel i { display: block; height: 38px; border-radius: var(--sf-r); background: linear-gradient(90deg, var(--sf-surface-2), var(--sf-surface-3), var(--sf-surface-2)); background-size: 200% 100%; animation: sf-shimmer 1.4s infinite; }
+
+@media (max-width: 1100px) { .sf-recs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.sf-root.is-compact .sf-statiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sf-root.is-compact .sf-statgrid { grid-template-columns: 1fr; }
+.sf-root.is-compact .sf-recs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sf-root.is-mobile .sf-statile strong { font-size: 24px; line-height: 30px; }
+.sf-root.is-mobile .sf-recs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sf-root.is-mobile .sf-rec { padding: 14px; }
+.sf-root.is-mobile .sf-stats__period { width: 100%; }
+.sf-root.is-mobile .sf-stats__period .sf-segmented { width: 100%; }
+.sf-root.is-mobile .sf-stats__period .sf-segmented__btn { flex: 1; justify-content: center; padding: 8px 6px; }
+.sf-root.is-mobile .sf-stats__period .sf-segmented__btn span { display: inline; }
+.sf-root.is-mobile .sf-bars__plot, .sf-root.is-mobile .sf-bars__axis { gap: 2px; }
+.sf-root.is-mobile .sf-rec:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.sf-longest__n.is-year { width: 38px; color: var(--sf-primary); }
+.sf-longest__tabs .sf-segmented__btn { padding: 4px 10px; }
+.sf-root.is-mobile .sf-longest__tabs { width: 100%; }
+.sf-root.is-mobile .sf-longest__tabs .sf-segmented { width: 100%; }
+.sf-root.is-mobile .sf-longest__tabs .sf-segmented__btn { flex: 1; justify-content: center; padding: 7px 4px; }
+.sf-root.is-mobile .sf-longest__tabs .sf-segmented__btn span { display: inline; }

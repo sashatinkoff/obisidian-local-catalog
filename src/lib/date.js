@@ -5,13 +5,21 @@ const MONTHS_NOM = ["Январь","Февраль","Март","Апрель","�
 const RU_MONTH = { янв: 0, фев: 1, мар: 2, апр: 3, мая: 4, май: 4, июн: 5, июл: 6, авг: 7, сен: 8, окт: 9, ноя: 10, дек: 11 };
 const pad = (n) => String(n).padStart(2, "0");
 
+// Числа меньше 1e11 — это секунды (иначе 1 200 000 000 превращается в 14 января 1970).
+const unixMs = (n) => (Math.abs(n) < 1e11 ? n * 1000 : n);
+// Всё, что раньше 1980 года, считается ошибкой данных, а не датой записи.
+const MIN_TS = Date.UTC(1980, 0, 1);
+const plausible = (ms) => ms != null && ms >= MIN_TS;
+
 function toMs(v) {
   if (v == null || v === "") return null;
-  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (typeof v === "number") return isFinite(v) ? unixMs(v) : null;
   if (v instanceof Date) return isNaN(v) ? null : v.getTime();
   if (typeof v.toMillis === "function") return v.toMillis(); // luxon DateTime (Dataview)
   if (typeof v === "object" && v.path) return fromFilename(v.path); // [[2024-10-01]] — дата из имени заметки
   const s = String(v).trim();
+  if (/^\d{9,10}$/.test(s)) return +s * 1000;   // Unix-время в секундах
+  if (/^\d{12,13}$/.test(s)) return +s;          // Unix-время в миллисекундах
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
   m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2}))?/);
@@ -56,4 +64,4 @@ function relativeLabel(ms, now = Date.now(), withTime = true) {
   return sameYear ? fmtDayMonth(ms) + t : `${fmtDayMonth(ms)} ${new Date(ms).getFullYear()}`;
 }
 
-module.exports = { DAY, MONTHS_GEN, MONTHS_NOM, toMs, hasTime, fromFilename, startOfDay, dayKey, monthKey, fmtDate, fmtDateLong, fmtTime, fmtDateTime, fmtDayMonth, sameMonthDay, relativeLabel };
+module.exports = { DAY, MONTHS_GEN, MONTHS_NOM, toMs, plausible, hasTime, fromFilename, startOfDay, dayKey, monthKey, fmtDate, fmtDateLong, fmtTime, fmtDateTime, fmtDayMonth, sameMonthDay, relativeLabel };

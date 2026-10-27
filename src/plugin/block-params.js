@@ -13,7 +13,7 @@ const list = (v) => String(v).split(/[,;]+/).map((t) => t.trim().replace(/^#/, "
 const FLAT = ["view", "layout", "theme", "id"];
 const BOOLS = ["nav", "fullWidth", "openInNewTab", "popupView"];
 const ALIASES = { tags: "any", любой: "any", теги: "any", alltags: "all", все: "all", exclude: "not", not: "not", исключить: "not", search: "text", text: "text", поиск: "text", period: "period", период: "period", sort: "sort", сортировка: "sort", from: "dateFrom", to: "dateTo", day: "day" };
-const VIEW_ALIAS = { обзор: "overview", лента: "stream", бенто: "bento", подборки: "collections", конструктор: "studio" };
+const VIEW_ALIAS = { обзор: "overview", лента: "stream", бенто: "bento", подборки: "collections", статистика: "stats", конструктор: "studio" };
 
 function parseBlock(source) {
   const input = {}, filter = {}, errors = [];

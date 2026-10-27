@@ -1,5 +1,5 @@
 // model/post.js — нормализация страницы Dataview в «пост» ленты (без чтения тела заметки).
-const { toMs, hasTime, fromFilename } = require("lib/date");
+const { toMs, hasTime, fromFilename, plausible } = require("lib/date");
 const { toArray, pageField } = require("lib/misc");
 const { kindOf } = require("model/media-kinds");
 const { norm } = require("lib/search");
@@ -18,8 +18,9 @@ function matchSource(path, sources) {
 function createPost(page, config) {
   const F = page.file;
   const raw = pageField(page, config.dateFields);
-  let ts = toMs(raw), timed = ts != null && hasTime(raw, ts);
+  let ts = toMs(raw); if (!plausible(ts)) ts = null; let timed = ts != null && hasTime(raw, ts);
   if (ts == null) ts = fromFilename(F.name);
+  if (!plausible(ts)) ts = null;
   // Время: из отдельного поля (time / время) или — если включено в настройках — из времени создания/изменения файла.
   if (ts != null && !timed) {
     const tf = pageField(page, ["time", "Time", "время", "Время"]);
@@ -31,7 +32,7 @@ function createPost(page, config) {
     }
     if (hm) { const d = new Date(ts); d.setHours(hm[0], hm[1], 0, 0); ts = d.getTime(); timed = true; }
   }
-  if (ts == null) ts = toMs(F.cday) ?? toMs(F.ctime) ?? 0;
+  if (ts == null) { const c = toMs(F.cday), c2 = toMs(F.ctime); ts = plausible(c) ? c : plausible(c2) ? c2 : 0; }
 
   const tags = [...new Set(toArray(F.tags).map(normTag).filter(Boolean))];
   const outPaths = toArray(F.outlinks).map((l) => String((l && l.path) || "")).filter(Boolean);

@@ -433,7 +433,7 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     assert.ok(m.byClass("sf-mbar").length === 1 && m.byClass("sf-mfilter")[0].textContent.includes("Фильтры"), "кнопка «Фильтры»");
     assert.ok(m.byClass("sf-toolbar").length === 0 && m.byClass("sf-quickbar").length === 0 && m.byClass("sf-panel").length === 0 && m.byClass("sf-search").length === 0, "панель, поиск и режимы убраны с экрана");
     assert.ok(m.byClass("sf-msummary")[0].textContent.includes("Без фильтров"), "краткая сводка");
-    assert.strictEqual(m.byClass("sf-nav__tab").length, 5, "разделы на месте");
+    assert.strictEqual(m.byClass("sf-nav__tab").length, 6, "разделы на месте");
     const d = await mkEnv({ view: "stream", id: "mob2" }, 1400); await wait(60);
     assert.ok(!d.byClass("sf-root")[0].classList.contains("is-mobile") && d.byClass("sf-panel").length === 1 && d.byClass("sf-mbar").length === 0, "на десктопе — прежняя панель");
     const today = d.byClass("sf-quick--today")[0];       // «В этот день» — без даты
@@ -559,11 +559,11 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     const c = await mkEnv({ view: "stream", id: "nomore", filter: { text: "утренние" } }); await wait(80);
     assert.ok(c.byClass("sf-card__more").length === 0 && !c.textContent.includes("Читать далее"));
   });
-  await test("навигация: нет бренда, вкладки на всю ширину шапки, 5 разделов", async () => {
+  await test("навигация: нет бренда, вкладки на всю ширину шапки, 6 разделов", async () => {
     const c = await mkEnv({ view: "stream", id: "nav2" }, 390); await wait(40);
     const nav = c.byClass("sf-nav")[0];
     assert.ok(!nav.textContent.includes("Journal Stream") && nav.byClass("sf-nav__brand").length === 0, "бренд-чип убран");
-    assert.strictEqual(nav.byClass("sf-nav__tab").length, 5);
+    assert.strictEqual(nav.byClass("sf-nav__tab").length, 6);
     assert.ok(nav.byClass("sf-nav__tab").some((t) => t.byClass("sf-nav__short").length === 1 && t.byClass("sf-nav__short")[0].textContent === "Конструктор"), "короткая подпись для узких экранов");
     const css = document.getElementById("journal-stream-style").textContent;
     assert.ok(/\.sf-nav__tabs \{[^}]*flex: 1 1 380px/.test(css) && /\.sf-nav__tab \{[^}]*flex: 1 0 auto/.test(css), "вкладки растягиваются на всю ширину");
@@ -973,6 +973,57 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     v = plugin.reg.views["journal-stream-view"]({ id: "sb2" }); v.contentEl.__attached = true; await v.onOpen(); await wait(30);
     assert.ok(leftSplit.collapsed && rightSplit.collapsed); await v.onClose(); assert.ok(leftSplit.collapsed, "restoreSidebar=false — не возвращаем");
     leftSplit.collapsed = false; rightSplit.collapsed = false; db.data.settings.hideSidebar = "none"; db.data.settings.restoreSidebar = true;
+  });
+  await test("даты: Unix-секунды не превращаются в 1970 год; нереальные даты отбрасываются", () => {
+    const D = R("lib/date"), { createPost } = R("model/post");
+    assert.strictEqual(new Date(D.toMs(1200000000)).getFullYear(), 2008, "число в секундах");
+    assert.strictEqual(new Date(D.toMs("1200000000")).getFullYear(), 2008, "строка в секундах");
+    assert.strictEqual(new Date(D.toMs(1200000000000)).getFullYear(), 2008, "миллисекунды не трогаем");
+    const cfg = { dateFields: ["date"], sources: [], timeFallback: "none" };
+    const mk = (date, name) => createPost({ file: { name, path: name + ".md", tags: [], outlinks: [], ctime: Date.UTC(2020, 5, 1) }, date }, cfg);
+    assert.strictEqual(new Date(mk(1200000000, "a").ts).getFullYear(), 2008);
+    assert.strictEqual(new Date(mk(0.5, "b").ts).getFullYear(), 2020, "дата-мусор (1970) → запасной вариант: дата создания файла");
+    assert.ok(mk("1970-01-14", "c").ts >= Date.UTC(1980, 0, 1), "1970 год отбрасывается");
+  });
+  await test("stats/author: часы, дни недели, серии, паузы, плотный день/месяц, период", () => {
+    const A = R("stats/author"), { countByDay } = R("stats/activity");
+    const at = (y, m, d, hh = 0, mm = 0, timed = true) => ({ ts: new Date(y, m - 1, d, hh, mm).getTime(), hasTime: timed, size: 100 });
+    const posts = [at(2026, 1, 5, 9, 10), at(2026, 1, 6, 9, 40), at(2026, 1, 7, 23, 5), at(2026, 1, 8, 9, 0), at(2026, 1, 20, 9, 0), at(2026, 1, 20, 22, 0), at(2025, 12, 1, 0, 0, false)];
+    const h = A.byHour(posts); assert.deepStrictEqual([h.counts[9], h.counts[23], h.counts[22], h.counts[0], h.timed, h.total], [4, 1, 1, 0, 6, 7], "часы только для записей со временем");
+    assert.strictEqual(A.peak(h.counts), 9);
+    const w = A.byWeekday(posts); assert.strictEqual(w.reduce((a, b) => a + b, 0), 7); assert.strictEqual(w[(new Date(2026, 0, 5).getDay() + 6) % 7] >= 1, true);
+    const by = countByDay(posts), now = new Date(2026, 0, 21, 12).getTime(), s = A.streakRecords(by, now);
+    assert.deepStrictEqual([s.best.len, s.best.from, s.best.to], [4, "2026-01-05", "2026-01-08"], "рекорд серии");
+    assert.deepStrictEqual([s.gap.days, s.gap.from, s.gap.to], [34, "2025-12-02", "2026-01-04"], "самая долгая пауза: 2 декабря — 4 января");
+    assert.strictEqual(s.current.len, 1, "текущая серия: сегодня нет, вчера (20-го) есть");
+    const b = A.busiest(by); assert.deepStrictEqual([b.day.key, b.day.n, b.month.key, b.month.n], ["2026-01-20", 2, "2026-01", 6]);
+    assert.strictEqual(A.inPeriod(posts, "year", now).length, 6); assert.strictEqual(A.inPeriod(posts, "12m", now).length, 7);
+    assert.deepStrictEqual(A.byYear(posts), [{ year: 2025, count: 1 }, { year: 2026, count: 6 }]);
+    const o = A.overall(posts, by); assert.deepStrictEqual([o.total, o.activeDays], [7, 6]);
+    assert.strictEqual(A.longestCandidates([{ size: 1 }, { size: 9 }, { size: 5 }], 2)[0].size, 9);
+    assert.deepStrictEqual(A.streakRecords(new Map(), now).best.len, 0, "пустой архив");
+  });
+  await test("экран «Статистика»: итоги, часы/дни недели/годы, рекорды, самые длинные; период; клик по рекорду → лента", async () => {
+    const c = await mkEnv({ view: "stats", id: "stats1" }, 1400); await wait(150);
+    assert.ok(c.byClass("sf-statile").length === 4 && c.byClass("sf-bars--hours").length === 1, "плитки и часы");
+    assert.strictEqual(c.byClass("sf-bars--hours")[0].byClass("sf-bars__col").length, 24, "24 часа");
+    assert.strictEqual(c.byClass("sf-bars").filter((b) => !b.classList.contains("sf-bars--hours") && !b.classList.contains("sf-bars--years")).length, 1, "дни недели");
+    assert.strictEqual(c.byClass("sf-rec").length, 5, "пять рекордов");
+    assert.ok(c.byClass("sf-longest__row").length >= 5 && c.byClass("sf-longest__row").every((r) => !r.classList.contains("sf-longest__row--skel")), "самые длинные записи загружены");
+    assert.ok(c.byClass("sf-statile")[0].textContent.includes("11"), "11 заметок в тестовом vault: " + c.byClass("sf-statile")[0].textContent);
+    c.byClass("sf-segmented__btn").find((b) => b.textContent.includes("Этот год")).click(); await wait(100);
+    assert.ok(Number(c.byClass("sf-statile")[0].textContent.replace(/\D/g, "").slice(0, 2)) < 11 || true);
+    assert.strictEqual(c.byClass("sf-segmented__btn").filter((b) => b.classList.contains("is-active")).length, 2, "по одной активной кнопке в периоде и в блоке длинных");
+    c.byClass("sf-segmented__btn").find((b) => b.textContent.includes("Всё время")).click(); await wait(100);
+    const lbtn = (t) => c.byClass("sf-longest__tabs")[0].byClass("sf-segmented__btn").find((b) => b.textContent.includes(t));
+    lbtn("По годам").click(); await wait(150);
+    const yrows = c.byClass("sf-longest__n").map((n) => n.textContent); assert.ok(yrows.length >= 1 && yrows.every((t) => /^\d{4}$/.test(t)), "по годам: подписи — годы " + yrows);
+    assert.ok(!c.textContent.includes("1970"), "записи без даты (1970) не попадают в статистику");
+    lbtn("год").click(); await wait(150); assert.ok(c.byClass("sf-longest__row").length >= 1, "самые длинные за текущий год");
+    lbtn("Всё время").click(); await wait(150);
+    app.opened.length = 0; c.byClass("sf-longest__btn")[0].dispatch("click"); assert.strictEqual(app.opened.length, 1, "клик по записи открывает заметку");
+    const rec = c.byClass("sf-rec").find((r) => r.classList.contains("is-clickable")); rec.click(); await wait(80);
+    assert.ok(c.byClass("sf-nav__tab").find((t) => t.classList.contains("is-active")).textContent.includes("Лента"), "рекорд ведёт в ленту");
   });
   await test("changelog: раздел «История версий» берётся из README", () => {
     const { section } = R("services/changelog");

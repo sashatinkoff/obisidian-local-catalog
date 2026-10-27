@@ -57,7 +57,7 @@ MODAL_PROBE = """() => {
 def run(shots=False):
     page_path = build_page(); url = "file://" + str(page_path)
     widths = [360, 390, 430, 600, 768, 820, 1024, 1440]
-    views = [("overview", ""), ("stream", ""), ("stream", "&layout=timeline"), ("bento", ""), ("collections", ""), ("studio", "")]
+    views = [("overview", ""), ("stream", ""), ("stream", "&layout=timeline"), ("bento", ""), ("collections", ""), ("stats", ""), ("studio", "")]
     problems = 0
     with sync_playwright() as p:
         b = p.chromium.launch()
