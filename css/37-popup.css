@@ -1,0 +1,21 @@
+/* 37-popup.css — плавающее окно просмотра заметки (режим «Открывать заметки в плавающем окне»).
+   Затемнение (overlay) на весь экран в <body>, окно по центру; перетаскивается за заголовок, размер меняется за правый нижний угол. */
+.sf-npop-overlay { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8, 6, 14, 0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: sfNpopFade 0.14s ease-out; }
+@keyframes sfNpopFade { from { opacity: 0; } to { opacity: 1; } }
+.sf-npop.sf-root { position: relative; flex: none; width: min(720px, calc(100vw - 48px)); height: min(78vh, 800px); min-width: 300px; min-height: 220px; max-width: 94vw; max-height: 92vh;
+  display: flex; flex-direction: column; padding: 0; margin: 0; overflow: hidden; resize: both; border-radius: var(--sf-r-lg, 16px);
+  background: var(--sf-canvas); color: var(--sf-text); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px var(--sf-line); }
+.sf-npop__head { display: flex; align-items: center; gap: 6px; padding: 10px 12px; cursor: move; border-bottom: 1px solid var(--sf-line); background: var(--sf-surface); user-select: none; touch-action: none; }
+.sf-npop__title { flex: 1; min-width: 0; margin: 0; font-family: var(--sf-font-head); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-npop__head .sf-iconbtn { flex: none; width: 32px; height: 32px; }
+.sf-npop__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 0; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+.sf-npop__meta:empty { display: none; }
+.sf-npop__meta .sf-chip { max-width: 100%; }
+.sf-npop__body { flex: 1; min-height: 0; overflow: auto; padding: 8px 18px 24px; user-select: text; overflow-wrap: anywhere; }
+.sf-npop__body img, .sf-npop__body video { max-width: 100%; height: auto; border-radius: 10px; }
+.sf-npop__body .frontmatter, .sf-npop__body .metadata-container { display: none; }
+@media (max-width: 700px) {
+  .sf-npop-overlay { padding: 0; align-items: flex-end; }
+  .sf-npop.sf-root { width: 100vw; height: 88vh; max-width: none; max-height: none; border-radius: 16px 16px 0 0; resize: none; }
+  .sf-npop__head { cursor: default; }
+}

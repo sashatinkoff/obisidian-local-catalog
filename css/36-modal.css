@@ -1,0 +1,22 @@
+/* 36-modal.css — модальное окно «Фильтры» (мобильная версия). Живёт в <body>: position: fixed, токены из data-sf-theme. */
+.sf-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, 0.55); }
+.sf-modal__sheet { display: flex; flex-direction: column; width: 100%; max-width: 620px; max-height: 94vh; max-height: 94dvh; background: var(--sf-canvas); color: var(--sf-text); border-radius: var(--sf-r-xl) var(--sf-r-xl) 0 0; box-shadow: var(--sf-glow); overflow: hidden; font-family: var(--sf-font-body); }
+.sf-modal__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 10px; border-bottom: 1px solid var(--sf-line); }
+.sf-modal__title { margin: 0; font-family: var(--sf-font-head); font-size: 18px; font-weight: 600; color: var(--sf-text); }
+.sf-modal__close { width: 38px; height: 38px; }
+.sf-modal__root.sf-root { max-width: none; margin: 0; padding: 0; border-radius: 0; background: none; overflow-y: auto; overflow-x: clip; flex: 1; min-height: 0; overscroll-behavior: contain; }
+.sf-modal__body { display: flex; flex-direction: column; gap: 18px; padding: 14px 16px 20px; min-width: 0; }
+.sf-modal__footer { display: flex; align-items: center; gap: 8px; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--sf-line); background: var(--sf-canvas); }
+.sf-modal__show { flex: 1; justify-content: center; }
+.sf-modal__refresh { flex: none; background: var(--sf-surface-2); }
+.sf-msec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sf-msec__title { margin: 0; font-family: var(--sf-font-mono); font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); }
+.sf-msec__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* внутри окна ничего не прокручивается вбок: режимы и теги переносятся */
+.sf-modal .sf-quickbar { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
+.sf-modal .sf-dropdown { position: relative; }
+.sf-modal .sf-dropdown > .sf-btn { width: auto; }
+.sf-modal .sf-menu { left: 0; right: 0; width: auto; max-width: none; }
+.sf-modal .sf-search { width: 100%; }
+.sf-modal .sf-formula { flex-wrap: wrap; }
+@media (min-width: 640px) { .sf-modal { align-items: center; } .sf-modal__sheet { border-radius: var(--sf-r-xl); max-height: 88vh; } }

@@ -1,0 +1,82 @@
+/* 00-tokens.css — дизайн-токены по dashboard.html (тональные слои без рамок). Тёмная и светлая темы.
+   Всё оформление берётся отсюда. Тема: config.theme / кнопка в навигации; auto — по теме Obsidian. */
+.sf-root, .sf-fab, .sf-modal {
+  /* светлая тема (вариация той же палитры) */
+  --sf-canvas: #fbf8fd;            /* surface */
+  --sf-surface: #f5f2f8;           /* surface-container-low — карточки */
+  --sf-surface-2: #efecf2;         /* surface-container — вложенные блоки */
+  --sf-surface-3: #e9e6ec;         /* surface-container-high — hover вложенных */
+  --sf-surface-4: #e3e1e6;         /* surface-container-highest — активные вкладки */
+  --sf-surface-hover: #efecf2;     /* hover карточки: на ступень темнее */
+  --sf-line: rgba(77, 67, 84, 0.16);
+  --sf-text: #1b1b1d;              /* on-surface */
+  --sf-text-2: #4d4354;            /* on-surface-variant */
+  --sf-text-3: #7e7387;            /* outline */
+  --sf-primary: #842bd2;           /* текст/иконки акцента */
+  --sf-primary-hover: #6900b3;
+  --sf-primary-soft: rgba(132, 43, 210, 0.08);
+  --sf-primary-line: rgba(132, 43, 210, 0.28);
+  --sf-primary-fill: #842bd2;      /* заливка главной кнопки */
+  --sf-primary-on: #ffffff;
+  --sf-accent-grad: linear-gradient(135deg, #8f45e0 0%, #6a1fb5 100%);               /* заливка активных кнопок */
+  --sf-accent-soft: linear-gradient(135deg, rgba(132, 43, 210, 0.16), rgba(132, 43, 210, 0.04)); /* неактивные кнопки */
+  --sf-secondary: #6001d1;
+  --sf-secondary-container: #eaddff;
+  --sf-on-secondary-container: #25005a;
+  --sf-secondary-soft: rgba(96, 1, 209, 0.07);
+  --sf-tint: var(--sf-primary-soft);   /* оттенок градиента карточки; у типов (аудио, видео…) переопределяется */
+  --sf-tertiary: #00658a;
+  --sf-tertiary-soft: rgba(0, 101, 138, 0.1);
+  --sf-danger: #ba1a1a;
+  --sf-danger-soft: rgba(186, 26, 26, 0.1);
+  --sf-glow: 0 6px 24px -4px rgba(132, 43, 210, 0.18);
+  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --sf-heat-0: #ebe7ef; --sf-heat-1: #e0d0f5; --sf-heat-2: #c29cf0; --sf-heat-3: #a468e6; --sf-heat-4: #842bd2;
+
+  --sf-r: 0.5rem;          /* lg: поля, кнопки */
+  --sf-r-sm: 0.25rem;      /* DEFAULT: чипы-правила */
+  --sf-r-lg: 0.75rem;      /* xl: вложенные блоки */
+  --sf-r-xl: 1rem;         /* 2xl: карточки */
+  --sf-r-pill: 9999px;
+  --sf-gutter: 1rem;
+  --sf-gutter-lg: 1.5rem;
+  --sf-pad: 1.25rem;
+  --sf-quote-size: calc(17px / 1.5); /* размер текста цитаты: прежние 17px, уменьшенные в 1.5 раза */
+
+  --sf-font-head: "Geist", "Inter", var(--font-interface), system-ui, sans-serif;
+  --sf-font-body: "Inter", var(--font-text), system-ui, sans-serif;
+  --sf-font-mono: "JetBrains Mono", var(--font-monospace), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.sf-root[data-sf-theme="dark"], .sf-fab[data-sf-theme="dark"], .sf-modal[data-sf-theme="dark"],
+body.theme-dark .sf-root[data-sf-theme="auto"], body.theme-dark .sf-fab[data-sf-theme="auto"], body.theme-dark .sf-modal[data-sf-theme="auto"] {
+  --sf-canvas: #131315;
+  --sf-surface: #1b1b1d;
+  --sf-surface-2: #1f1f21;
+  --sf-surface-3: #2a2a2c;
+  --sf-surface-4: #353437;
+  --sf-surface-hover: #1f1f21;
+  --sf-line: rgba(77, 67, 84, 0.5);
+  --sf-text: #e4e2e4;
+  --sf-text-2: #cfc2d6;
+  --sf-text-3: #988d9f;
+  --sf-primary: #ddb7ff;
+  --sf-primary-hover: #f0dbff;
+  --sf-primary-soft: rgba(221, 183, 255, 0.1);
+  --sf-primary-line: rgba(221, 183, 255, 0.28);
+  --sf-primary-fill: #ddb7ff;
+  --sf-primary-on: #490080;
+  --sf-accent-grad: linear-gradient(135deg, #f0dbff 0%, #ddb7ff 45%, #b76dff 100%);
+  --sf-accent-soft: linear-gradient(135deg, rgba(221, 183, 255, 0.2), rgba(221, 183, 255, 0.05));
+  --sf-secondary: #d2bbff;
+  --sf-secondary-container: #6001d1;
+  --sf-on-secondary-container: #c9aeff;
+  --sf-secondary-soft: rgba(210, 187, 255, 0.1);
+  --sf-tertiary: #7bd0ff;
+  --sf-tertiary-soft: rgba(123, 208, 255, 0.12);
+  --sf-danger: #ffb4ab;
+  --sf-danger-soft: rgba(255, 180, 171, 0.12);
+  --sf-glow: 0 6px 24px -4px rgba(0, 0, 0, 0.5);
+  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --sf-heat-0: #222225; --sf-heat-1: #3b2a5a; --sf-heat-2: #5b2f9a; --sf-heat-3: #8a45e6; --sf-heat-4: #ddb7ff;
+}

@@ -1,0 +1,14 @@
+/* 15-fullwidth.css — режим «на всю ширину».
+   Включается: config.fullWidth = true, параметром code-блока (fullWidth: true), кнопкой ⤢ в навигации
+   или вручную через frontmatter заметки `cssclasses: sf-page-full`.
+   Число колонок карточек задаётся в настройках: columns.min / columns.max / minCardWidth. */
+.sf-root.is-full { max-width: none; width: 100%; border-radius: 0; }
+
+/* Снимаем ограничение ширины строки у самой заметки (reading view и live preview) */
+.sf-page-full { --file-line-width: 100%; }
+.sf-page-full .markdown-preview-sizer,
+.sf-page-full .markdown-preview-sizer.markdown-preview-section { max-width: none !important; width: 100% !important; margin-inline: 0 !important; }
+.sf-page-full .cm-sizer { max-width: none !important; width: 100% !important; }
+.sf-page-full .cm-contentContainer,
+.sf-page-full .cm-content { max-width: none !important; width: 100% !important; margin-inline: 0 !important; }
+.sf-page-full.markdown-preview-view { padding-inline: var(--sf-gutter, 1rem); }

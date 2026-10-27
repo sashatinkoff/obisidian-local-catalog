@@ -1,0 +1,9 @@
+/* 12-host.css — размещение в Obsidian: вкладка плагина (ItemView), code-блок ```journal-stream```, окно истории версий. */
+.sf-view-host { padding: 0 !important; }
+.sf-view-host > .sf-root { min-height: 100%; }
+
+.sf-codeblock { margin: 0; }
+.sf-block-warn { margin: 0 0 8px; padding: 6px 10px; border-radius: 10px; font-size: 12px; color: var(--text-error); background: var(--background-secondary); }
+
+.sf-changelog .modal-content { max-height: 70vh; overflow-y: auto; }
+.sf-changelog h3 { margin-top: 1.2em; }

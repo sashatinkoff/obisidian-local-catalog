@@ -1,0 +1,65 @@
+/* 41-card-types.css — тела карточек по типам: цитата, аудио, видео, фото, canvas, задачи, ссылка, rich-link. */
+.sf-quote { position: relative; margin: 0; padding: 12px 14px 12px 16px; border-left: 2px solid var(--sf-primary-line); background: var(--sf-surface-2); border-radius: 0 var(--sf-r-lg) var(--sf-r-lg) 0; }
+.sf-quote__mark { position: absolute; top: 10px; right: 12px; color: var(--sf-primary); opacity: 0.3; }
+.sf-quote__text { font-family: var(--sf-font-body); font-size: var(--sf-quote-size); line-height: 1.5; font-weight: 400; font-style: italic; color: var(--sf-text-2); }
+.sf-quote__text > :first-child { margin-top: 0; } .sf-quote__text > :last-child { margin-bottom: 0; }
+.sf-quote__cite { display: block; margin-top: 8px; font-style: normal; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+
+.sf-audio { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); }
+.sf-audio__btn { width: 36px; height: 36px; border-radius: 50%; background: var(--sf-primary-fill); color: var(--sf-primary-on); display: inline-flex; align-items: center; justify-content: center; flex: none; transition: background 0.15s; }
+.sf-audio__btn:hover, .sf-audio__btn.is-playing { background: var(--sf-primary-hover); }
+.sf-audio__wave { display: flex; align-items: center; gap: 2px; height: 34px; flex: 1; cursor: pointer; min-width: 0; }
+.sf-audio__bar { flex: 1; min-width: 2px; border-radius: 2px; background: var(--sf-surface-4); transition: background 0.1s; }
+.sf-audio__bar.is-played { background: var(--sf-tertiary); }
+.sf-audio__time { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-tertiary); white-space: nowrap; }
+.sf-audio audio { display: none; }
+
+.sf-video { position: relative; border-radius: var(--sf-r-lg); overflow: hidden; background: #000; }
+.sf-video video { display: block; width: 100%; max-height: 340px; }
+.sf-video__badge { position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: var(--sf-r-pill); background: rgba(0, 0, 0, 0.6); color: #fff; font-family: var(--sf-font-mono); font-size: 10.5px; pointer-events: none; }
+
+/* Картинки: centerCrop. Рамка имеет фиксированные пропорции, картинка заполняет её (object-fit: cover по центру) и
+   НЕ реагирует на наведение — ни масштаба, ни сдвига, ни фильтров (раньше hover-эффект «двигал» картинку). */
+.sf-images { display: grid; gap: 4px; border-radius: var(--sf-r-lg); overflow: hidden; aspect-ratio: 16 / 10; background: var(--sf-surface-2); }
+.sf-images--1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.sf-images--2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+.sf-images--3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; } .sf-images--3 .sf-images__cell:first-child { grid-row: span 2; }
+.sf-images--4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.sf-images__cell { position: relative; display: block; min-width: 0; min-height: 0; overflow: hidden; background: var(--sf-surface-2); }
+.sf-images__cell img, .sf-card img { transform: none !important; transition: none !important; filter: none !important; }
+.sf-images__cell img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; object-fit: cover; object-position: 50% 50%; display: block; }
+.sf-images__more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-family: var(--sf-font-head); font-size: 22px; font-weight: 600; }
+
+.sf-canvas { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text); transition: background 0.15s; }
+.sf-canvas:hover { background: var(--sf-surface-3); }
+.sf-canvas .sf-icon { color: var(--sf-primary); }
+.sf-canvas__name { font-family: var(--sf-font-mono); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.sf-canvas__open { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-primary); }
+
+.sf-progress { height: 4px; border-radius: 2px; background: var(--sf-surface-4); overflow: hidden; }
+.sf-progress__bar { height: 100%; background: var(--sf-primary); transition: width 0.3s; }
+.sf-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sf-tasks__item { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; }
+.sf-tasks__box { width: 16px; height: 16px; flex: none; margin-top: 3px; border: 1px solid var(--sf-text-3); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--sf-primary-on); }
+.sf-tasks__item.is-done .sf-tasks__box { background: var(--sf-primary-fill); border-color: var(--sf-primary-fill); }
+.sf-tasks__item.is-done > span:last-child { color: var(--sf-text-3); text-decoration: line-through; }
+.sf-tasks__more { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+
+.sf-extlink { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text-2); transition: background 0.15s; }
+.sf-extlink:hover { background: var(--sf-surface-3); }
+.sf-extlink__main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.sf-extlink__host { font-family: var(--sf-font-head); font-weight: 500; color: var(--sf-text); }
+.sf-extlink__url { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Rich-link: строка «заметка» как во вложенных блоках dashboard (surface-container, hover — container-high) */
+.sf-richlink { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text); transition: background 0.15s; }
+.sf-richlink:hover { background: var(--sf-surface-3); }
+.sf-richlink__icon { display: inline-flex; width: 28px; height: 28px; border-radius: var(--sf-r); background: var(--sf-primary-soft); color: var(--sf-primary); align-items: center; justify-content: center; flex: none; }
+.sf-richlink--audio .sf-richlink__icon, .sf-richlink--video .sf-richlink__icon { background: var(--sf-tertiary-soft); color: var(--sf-tertiary); }
+.sf-richlink__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.sf-richlink__title { font-family: var(--sf-font-head); font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-richlink:hover .sf-richlink__title { color: var(--sf-primary); }
+.sf-richlink__excerpt { font-size: 12px; line-height: 18px; color: var(--sf-text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sf-richlink__excerpt:empty { display: none; }
+.sf-richlink__meta { font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); }
+.sf-richlink__out { color: var(--sf-text-3); flex: none; }

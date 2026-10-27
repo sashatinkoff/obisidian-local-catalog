@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Тестовая страница: имитирует режим чтения Obsidian (.markdown-preview-view со своим скроллом, узкий .markdown-preview-sizer)
+     и подставляет фиктивные app/plugin/obsidian с ~50 заметками разных типов. Файлы виджета подставляет runner (layout_check.py). -->
+<style>
+  :root { --background-secondary:#262626; --background-modifier-border:#3a3a3a; --text-error:#f66; --font-interface:system-ui,sans-serif; --font-text:system-ui,sans-serif; --font-monospace:ui-monospace,Menlo,monospace; --file-line-width:700px; }
+  html, body { margin:0; height:100%; }
+  body { font-family:var(--font-interface); background:#1e1e1e; color:#ddd; }
+  body.theme-light { background:#fff; color:#222; }
+  .markdown-preview-view { height:100vh; overflow-y:auto; box-sizing:border-box; padding:0 12px; }
+  .markdown-preview-sizer { max-width:var(--file-line-width); margin:0 auto; padding-bottom:80px; }
+  .sf-page-full .markdown-preview-sizer { max-width:none !important; }
+  .markdown-preview-view h1 { margin:0.6em 0; }
+</style></head>
+<body class="theme-dark">
+<div class="markdown-preview-view"><div class="markdown-preview-sizer"><div id="dv"></div></div></div>
+<script>window.__FILES = /*FILES*/{};</script>
+<script>/*FAKEAPP*/</script>
+<script>/*FAKEOBSIDIAN*/</script>
+<script>
+(async () => {
+  const files = window.__FILES, PLUGIN = ".obsidian/plugins/journal-stream";
+  const q = new URLSearchParams(location.search);
+  const input = Object.fromEntries([...q.entries()].map(([k, v]) => [k, v === "true" ? true : v === "false" ? false : v]));
+  if (input.theme === "light") { document.body.classList.replace("theme-dark", "theme-light"); }
+
+  // ---------- заметки ----------
+  const DAY = 864e5, now = Date.now(), pad = (n) => String(n).padStart(2, "0");
+  const TAGS = ["мысли", "daily", "zettel", "dev", "obsidian", "проекты", "книги", "идеи", "путешествия", "цитаты", "работа"];
+  const WORDS = "заметка мысль идея проект книга код дневник утро вечер план задача путь история память связь граф система поток текст запись пример вывод".split(" ");
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const para = (n) => Array.from({ length: n }, () => pick(WORDS)).join(" ");
+  const N = +(input.notes || 48), notes = [];
+  for (let i = 0; i < N; i++) {
+    const d = new Date(now - (i * 8 + Math.floor(rnd() * 6)) * DAY - Math.floor(rnd() * 20) * 3600e3);
+    const tags = [...new Set([pick(TAGS), pick(TAGS), rnd() > 0.5 ? pick(TAGS) : null].filter(Boolean))];
+    let body = para(12 + Math.floor(rnd() * 90)) + " [[Zettelkasten]] #" + tags[0] + ". " + para(8);
+    const out = []; let k = i % 11;
+    if (k === 1 || k === 6) { const c = 1 + (i % 5); for (let j = 0; j < c; j++) { body += `\n![[photo-${i}-${j}.jpg]]`; out.push(`photo-${i}-${j}.jpg`); } }
+    if (k === 3) { body += `\n![[rec-${i}.m4a]]`; out.push(`rec-${i}.m4a`); }
+    if (k === 5) { body += `\n![[clip-${i}.mp4]]`; out.push(`clip-${i}.mp4`); }
+    if (k === 7) body = `> [!quote] Автор ${i}\n> ${para(18)}\n\n${para(6)}`;
+    if (k === 8) body = "- [x] первое\n- [ ] второе\n- [ ] третье\n\n" + para(10);
+    if (k === 10) body = "https://example.com/article/" + i + " " + para(5);
+    notes.push({ path: `notes/2026/n${i}.md`, title: i % 3 === 0 ? "Заметка про " + pick(WORDS) + " " + i : null, date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`, tags: tags.map((t) => "#" + t), body, out, inl: Math.floor(rnd() * 9), tasks: k === 8 ? 3 : 0 });
+  }
+  if (input.stress) { // стресс-данные: длинные слова без пробелов в названии, теге и тексте
+    notes[0].title = "Сверхдлинное_название_заметки_без_единого_пробела_".repeat(3);
+    notes[0].tags.push("#" + "очень_длинный_тег_".repeat(5));
+    notes[0].body = "ссылка_без_пробелов_" + "x".repeat(120) + " " + notes[0].body;
+  }
+  const byPath = Object.fromEntries(notes.map((n) => [n.path, n]));
+  const svg = (name) => { const h = [...name].reduce((s, c) => (s * 31 + c.charCodeAt(0)) % 360, 0); return "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='hsl(${h},60%,45%)'/><stop offset='1' stop-color='hsl(${(h + 60) % 360},70%,30%)'/></linearGradient></defs><rect width='640' height='360' fill='url(#g)'/><circle cx='320' cy='180' r='70' fill='rgba(255,255,255,.18)'/></svg>`); };
+
+  // ---------- app / plugin (как в Obsidian: vault + metadataCache, loadData/saveData, модуль obsidian) ----------
+  const keys = () => Object.keys(files);
+  const adapter = {
+    read: async (p) => files[p],
+    write: async (p, d) => { files[p] = d; },
+    mkdir: async () => {},
+    exists: async (p) => p in files || keys().some((k) => k.startsWith(p + "/")),
+    list: async (dir) => {
+      const pre = dir + "/", fl = [], fo = new Set();
+      for (const k of keys()) if (k.startsWith(pre)) { const rest = k.slice(pre.length); const i = rest.indexOf("/"); if (i < 0) fl.push(k); else fo.add(pre + rest.slice(0, i)); }
+      return { files: fl, folders: [...fo] };
+    },
+  };
+  window.__opened = [];
+  const v = buildVault(notes, { now, resource: svg });
+  const app = {
+    vault: { adapter, getMarkdownFiles: v.getMarkdownFiles, getAbstractFileByPath: v.getAbstractFileByPath, cachedRead: v.cachedRead, getResourcePath: v.getResourcePath },
+    metadataCache: v.metadataCache,
+    workspace: { openLinkText: (p, s, nt) => window.__opened.push([p, nt]) },
+  };
+  let saved = input.nodata ? null : (files[PLUGIN + "/data.json"] ? JSON.parse(files[PLUGIN + "/data.json"]) : null);
+  const plugin = { app, manifest: { dir: PLUGIN }, loadData: async () => saved, saveData: async (d) => { saved = JSON.parse(JSON.stringify(d)); } };
+
+  const mdToHtml = (md) => md.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (m, a, b) => `<a class="internal-link" data-href="${a}" href="${a}">${b || a}</a>`)
+    .replace(/(^|\s)#([\p{L}\p{N}_-]+)/gu, (m, s, t) => `${s}<a class="tag" href="#${t}">#${t}</a>`)
+    .split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+  const obsidian = makeObsidian({ render: (md, el) => { const t = document.createElement("div"); t.innerHTML = mdToHtml(md); el.append(...t.childNodes); } });
+  const container = document.getElementById("dv");
+
+  // ---------- запуск (как main.js плагина → mount вида) ----------
+  try {
+    // загрузчик берём из main.js плагина (вырезаем объявление createLoader — оно самодостаточно)
+    const mainSrc = files[PLUGIN + "/tools/main.template.js"], i0 = mainSrc.indexOf("function createLoader"), i1 = mainSrc.indexOf("module.exports = class");
+    const createLoader = new Function(mainSrc.slice(i0, i1) + "\nreturn createLoader;")();
+    const { require: sfRequire } = await createLoader({ app, root: PLUGIN + "/src", externals: { obsidian } }).load();
+    const core = await sfRequire("app/main").createCore(plugin);
+    await sfRequire("app/main").mount(core, { container, input, sourcePath: "Dashboard.md", component: {} });
+    window.__ready = true;
+  } catch (e) { console.error(e); window.__error = String(e && e.stack || e); document.body.insertAdjacentHTML("beforeend", "<pre style='color:#f66'>" + window.__error + "</pre>"); }
+})();
+</script></body></html>

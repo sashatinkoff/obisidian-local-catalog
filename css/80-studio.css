@@ -1,0 +1,18 @@
+/* 80-studio.css — конструктор фильтров и генератор DQL. */
+.sf-studio { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: var(--sf-gutter-lg); align-items: start; }
+.sf-studio__main, .sf-studio__side { display: flex; flex-direction: column; gap: var(--sf-gutter); min-width: 0; }
+.sf-studio__side { position: sticky; top: 8px; }
+.sf-meta { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; padding: var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); }
+.sf-iconpick { display: flex; flex-wrap: wrap; gap: 2px; }
+.sf-livepreview, .sf-dqlpanel { display: flex; flex-direction: column; gap: 10px; padding: var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); }
+.sf-livepreview__head, .sf-dqlpanel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-2); }
+.sf-livepreview__list { display: flex; flex-direction: column; gap: 8px; }
+.sf-dql { margin: 0; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); font-family: var(--sf-font-mono); font-size: 12.5px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-dql code { font-family: inherit; background: none; padding: 0; color: var(--sf-text); }
+.sf-dql__kw { color: var(--sf-primary); font-weight: 600; } .sf-dql__str { color: #4ade80; } .sf-dql__fn { color: var(--sf-tertiary); } .sf-dql__num { color: #fbbf24; }
+.sf-root:not([data-sf-theme="dark"]) .sf-dql__str { color: #16803c; }
+.sf-dqlpanel__notes { margin: 0; padding-left: 18px; font-size: 12px; color: var(--sf-text-3); }
+.sf-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px var(--sf-gutter); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); position: sticky; top: 8px; z-index: 5; }
+.sf-panel__search { display: flex; }
+.sf-panel__search .sf-search { flex: 1; max-width: none; }
+.sf-search--panel .sf-input-wrap { background: var(--sf-surface-2); }

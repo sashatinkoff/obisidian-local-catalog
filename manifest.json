@@ -1,9 +1,9 @@
 {
-  "id": "book-gallery",
-  "name": "Book Gallery",
-  "version": "1.0.0",
+  "id": "journal-stream",
+  "name": "Journal Stream",
+  "version": "2.2.1",
   "minAppVersion": "1.4.0",
-  "description": "Каталог прочитанных книг: бенто-карточки, таблица, фильтры, статистика и пульс года. Без Dataview.",
+  "description": "Лента заметок в виде карточек: обзор, лента, бенто, подборки, конструктор фильтров, поиск и мобильный вид. Без Dataview.",
   "author": "sashatinkoff",
   "isDesktopOnly": false
 }

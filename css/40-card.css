@@ -1,0 +1,32 @@
+/* 40-card.css — карточка поста (как карточки dashboard): surface-container-low, радиус 1rem, без рамки;
+   при наведении фон на ступень светлее; клик по карточке открывает заметку. */
+.sf-card { display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); transition: background 0.18s, box-shadow 0.18s; min-width: 0; }
+.sf-card.is-clickable { cursor: pointer; }
+.sf-card:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); box-shadow: var(--sf-glow); }
+.sf-card--audio { --sf-tint: var(--sf-tertiary-soft); }
+.sf-card--video, .sf-card--canvas { --sf-tint: var(--sf-secondary-soft); }
+.sf-card--quote { --sf-tint: var(--sf-primary-soft); }
+.sf-card:hover .sf-chip:not(.is-active) { background: var(--sf-surface-3); }
+.sf-card.is-pinned { box-shadow: inset 0 0 0 1px var(--sf-primary-line); }
+.sf-card__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sf-card__date { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); letter-spacing: 0.04em; }
+.sf-card__meta { display: flex; align-items: center; gap: 4px; }
+.sf-card__meta .sf-iconbtn { width: 26px; height: 26px; }
+.sf-card__title { font-family: var(--sf-font-head); font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.015em; color: var(--sf-text); }
+.sf-card__title:hover { color: var(--sf-primary); }
+.sf-card__body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sf-card__text { font-size: 14px; line-height: 22px; color: var(--sf-text); overflow-wrap: anywhere; }
+.sf-card__text > :first-child { margin-top: 0; } .sf-card__text > :last-child { margin-bottom: 0; }
+.sf-card__text img { max-width: 100%; border-radius: var(--sf-r-sm); }
+.sf-card__text a.internal-link, .sf-richlink a.internal-link { color: var(--sf-primary); background: var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 0.92em; border-radius: 4px; padding: 1px 5px; text-decoration: none; transition: filter 0.15s; }
+.sf-card__text a.internal-link:hover { filter: brightness(1.2); }
+.sf-card__text a.tag { color: var(--sf-secondary); background: var(--sf-surface-2); font-family: var(--sf-font-mono); font-size: 0.9em; border-radius: var(--sf-r-pill); padding: 1px 8px; cursor: pointer; }
+.sf-card__text a.external-link { color: var(--sf-tertiary); }
+.sf-card__text pre { background: var(--sf-surface-2); border-radius: var(--sf-r); font-size: 12.5px; }
+.sf-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+.sf-card__tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.sf-card__tagmore { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); align-self: center; }
+.sf-card__stats { display: flex; align-items: center; gap: 10px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+.sf-card__backlinks { display: inline-flex; align-items: center; gap: 4px; color: var(--sf-tertiary); }
+.sf-card__stats .sf-iconbtn { width: 26px; height: 26px; }
+.sf-media-missing { padding: 10px 12px; border-radius: var(--sf-r); background: var(--sf-danger-soft); color: var(--sf-danger); font-size: 12px; font-family: var(--sf-font-mono); }

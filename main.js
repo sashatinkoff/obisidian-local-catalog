@@ -1,302 +1,4354 @@
-// ==========================================================
-// Book Gallery — плагин Obsidian: каталог прочитанных книг.
-//
-// Без сборки: достаточно скопировать папку в <хранилище>/.obsidian/plugins/book-gallery/
-//   main.js        — этот файл: загрузчик модулей, регистрация блока кода, вкладки, настроек и автообновления
-//   manifest.json  — описание плагина
-//   src/*.js       — модули (config, utils, icons, data, notes, stats, filters, layout, thumbs,
-//                    cards, list, templates, ui, app — на экземпляр галереи; settings, view — на плагин)
-//   styles/*.css   — стили, подключаются одним <style>
-//
-// Модули читаются из src/ через app.vault.adapter и выполняются как (ctx, module, exports) => …:
-// так плагин одинаково работает на компьютере и на телефоне, где require() локальных файлов недоступен.
-//
-// Использование в заметке:
-//   ```book-gallery
-//   folder: Прочитанные книги
-//   ```
-// ==========================================================
+/* Journal Stream v2.2.1 — собранный файл (tools/build.js). Не редактируйте: правьте src/ и пересобирайте. */
+const __JS_BUNDLE__ = {
+  modules: {
+"app/actions": function (module, exports, require) {
+// app/actions.js — все изменения состояния в одном месте (UI вызывает только их).
+const { toggleTag, removeTag, merge, defaultFilter, toggleIn } = require("filters/state");
+const { newSeed } = require("lib/random");
+const { toState } = require("filters/presets");
 
-const obsidian = require("obsidian");
-const { Plugin, MarkdownRenderChild, Notice, parseYaml } = obsidian;
+const newDraft = () => ({ id: null, name: "", description: "", icon: "star" });
+const draftOf = (p) => ({ id: p.id, name: p.name || "", description: p.description || "", icon: p.icon || "star" });
 
-const VIEW_TYPE = "book-gallery-view";
-const CODE_BLOCK = "book-gallery";
-const STYLE_ID = "book-gallery-styles";
+module.exports = function createActions(ctx) {
+  const { store } = ctx;
+  const filter = () => store.get().filter;
+  const setFilter = (patch) => store.set({ filter: merge(filter(), patch), page: 1 });
+  // Состояние «с чистого листа» — применяется при входе в раздел.
+  const clean = () => ({ filter: defaultFilter(), quick: "all", page: 1, seed: newSeed(), presetId: null, collapsed: null, draft: null });
 
-// Модули одного экземпляра галереи. Порядок важен: модуль использует только те, что загружены раньше
-const MODULES = [
-    "config", "utils", "icons", "data", "notes", "stats", "filters",
-    "layout", "thumbs", "cards", "list", "templates", "ui", "app",
-];
-// Модули плагина целиком (загружаются один раз)
-const PLUGIN_MODULES = ["settings", "view"];
+  return {
+    setFilter,
+    newDraft,
+    resetFilter: () => store.set({ filter: defaultFilter(), page: 1, quick: "all", presetId: null }),
+    setQuick: (quick) => store.set({ quick, page: 1, presetId: null }),
+    shuffle: () => store.set({ seed: newSeed(), page: 1 }),
+    toggleTag: (mode, tag) => store.set({ filter: toggleTag(filter(), mode, tag), page: 1 }),
+    removeTag: (tag) => store.set({ filter: removeTag(filter(), tag), page: 1 }),
+    toggleAttr: (a) => setFilter({ attrs: toggleIn(filter().attrs, a) }),
+    toggleType: (t) => setFilter({ types: toggleIn(filter().types, t) }),
+    toggleSource: (s) => setFilter({ sources: toggleIn(filter().sources, s) }),
+    // Направление сортировки по времени: по умолчанию «сначала новые» (date-desc); любая другая сортировка → сначала новые
+    toggleSortDir: () => setFilter({ sort: filter().sort === "date-desc" ? "date-asc" : "date-desc" }),
+    setFullWidth: (fullWidth) => store.set({ fullWidth }),
+    setPopupView: (popupView) => store.set({ popupView }),
+    setOpenInNewTab: (openInNewTab) => store.set({ openInNewTab }),
+    setTheme: (theme) => store.set({ theme }),
+    // Повторный клик по активной кнопке возвращает автоопределение по ширине
+    setViewModeTo: (viewMode) => store.set({ viewMode }),
+    setViewMode: (mode) => store.set({ viewMode: store.get().viewMode === mode ? "auto" : mode }),
+    setInsightsCount: (insightsCount) => store.set({ insightsCount }),
+    setLayout: (layout) => store.set({ layout }),
+    setCollapsed: (collapsed) => store.set({ collapsed }),
+    nextPage: () => store.set({ page: store.get().page + 1 }),
 
-// Заполняется скриптом build.js: { src: {имя: текст}, styles: {имя: текст} }.
-// В исходной версии null — модули и стили читаются из папок src/ и styles/ рядом с main.js.
-const EMBEDDED = {"src":{"app":"// src/app.js — сборка одного экземпляра галереи: раскладка, чтение книг, отрисовка интерфейса.\n// Вызывается из main.js (Host.render) для блока кода ```book-gallery и для вкладки «Каталог книг».\n\nasync function run(container, opts) {\n    const { layout, data, ui } = ctx.lib;\n    try {\n        layout.apply(container);\n        const t0 = performance.now();\n        const books = data.loadBooks();\n        await ui.mount(container, books, {\n            loadMs: performance.now() - t0,\n            keep: opts.keep,\n            silent: opts.silent,\n            onCleanup: opts.onCleanup,\n        });\n    } catch (e) {\n        console.error(\"book-gallery:\", e);\n        container.innerHTML = \"\";\n        const box = document.createElement(\"div\");\n        box.style.cssText = \"color:#d9534f;margin-bottom:12px;white-space:pre-wrap;\";\n        box.textContent = \"book-gallery: \" + (e && e.message ? e.message : String(e));\n        container.appendChild(box);\n    }\n}\n\nmodule.exports = { run };\n","cards":"// lib/cards.js — бенто-сетка карточек.\n//\n// Сетка собирается полосами одинаковой высоты. Карточка занимает 1 колонку (вертикальная) или 2\n// (горизонтальная: обложка слева, справа текст и заметка). Полосы заполняются точно, без пустот и без\n// растягивания карточек: раскладку подбирает небольшой динамический расчёт (см. plan).\n// Большую карточку получает только книга, у которой достаточно текста (bigMinChars).\n// Без обработчиков: клики ловит ui.js по атрибутам data-action.\n\nconst { cfg } = ctx;\nconst { esc, cssUrl, plural } = ctx.lib.utils;\nconst { icon } = ctx.lib.icons;\nconst Notes = ctx.lib.notes;\nconst Thumbs = ctx.lib.thumbs;\n\n// «текст» -> «текст» в ёлочках, без двойных кавычек\nconst quoteText = (q) => `«${String(q).replace(/^[«\"“”\\s]+|[»\"“”\\s]+$/g, \"\")}»`;\n\n// Цитаты выводятся в ёлочках, отрывок из заметки книги — обычным текстом\nconst showText = (c) => (c.source === \"excerpt\" ? c.quote : quoteText(c.quote));\nconst captionOf = (c) => (c.source === \"excerpt\" ? \"О книге\" : c.source === \"property\" ? \"Цитата\" : \"Из заметок\");\n\nconst openAttrs = (path) => `data-action=\"open\" data-path=\"${esc(path)}\"`;\n\nconst scoreBadge = (b) =>\n    b.scoreText ? `<span class=\"bg-score bg-mono\">${b.scoreText}${icon(\"star\", \"bg-ico--fill bg-star\")}</span>` : \"\";\n\nconst notesLabel = (n) => `${n} ${plural(n, [\"заметка\", \"заметки\", \"заметок\"])}`;\n\nconst placeholder = (b) => `\n    <div class=\"bg-ph\">\n        ${icon(\"book\")}\n        <div class=\"bg-ph-title\">${esc(b.title)}</div>\n        <div class=\"bg-ph-author\">${esc(b.authors[0] || \"\")}</div>\n    </div>`;\n\n// Обложка с рейтингом и первым тегом\nfunction coverHtml(b, { tag = true, overlay = \"\" } = {}) {\n    const media = b.cover ? Thumbs.imgTag(b.cover, \"bg-cover-img\") : placeholder(b);\n    const chip = tag && b.tags[0] ? `<span class=\"bg-cover-tag bg-mono\">${esc(b.tags[0])}</span>` : \"\";\n    return `<div class=\"bg-cover${b.cover ? \"\" : \" bg-cover--empty\"}\">${media}${scoreBadge(b)}${chip}${overlay}</div>`;\n}\n\nconst genreHtml = (b) =>\n    b.genre ? `<span class=\"bg-genre bg-mono\">${icon(\"book\")}<span class=\"bg-ellipsis\">${esc(b.genre)}</span></span>` : `<span></span>`;\n\n// Подвал обычной карточки: «12 заметок · Финал 10/10»\nfunction statsRow(b) {\n    const parts = [];\n    if (b.notes) parts.push(`<span>${esc(notesLabel(b.notes))}</span>`);\n    if (b.label) parts.push(`<span class=\"bg-label-text\">${esc(b.label)}</span>`);\n    if (!parts.length) return \"\";\n    return `<div class=\"bg-card-stats bg-mono\">${parts.join('<i class=\"bg-dot\">·</i>')}</div>`;\n}\n\n// ---------- тексты в карточках ----------\n// Небольшой фрагмент текста в узкой карточке. Клик открывает показанную заметку (или книгу)\nfunction snippet(b) {\n    const c = Notes.content(b);\n    if (!c) return \"\";\n    return `<div class=\"bg-snippet\" data-book=\"${esc(b.path)}\" ${openAttrs(c.path)}><div class=\"bg-quote-text\">${esc(showText(c))}</div></div>`;\n}\n\n// Блок с заметкой в широкой карточке: цитата, ваш комментарий и кнопка «другая заметка»\nfunction bigQuote(b) {\n    const c = Notes.content(b);\n    if (!c) return \"\";\n    const reroll = b.noteList.length > 1\n        ? `<button class=\"bg-reroll\" type=\"button\" data-action=\"reroll\" data-path=\"${esc(b.path)}\" title=\"Показать другую заметку\" aria-label=\"Показать другую заметку\">${icon(\"reset\")}</button>`\n        : \"\";\n    return `<div class=\"bg-quote bg-quote--big\" data-book=\"${esc(b.path)}\" ${openAttrs(c.path)}>\n        <div class=\"bg-quote-cap bg-mono\">${icon(\"quote\")}<span class=\"bg-cap-text\">${esc(captionOf(c))}</span>${reroll}</div>\n        <div class=\"bg-quote-text\">${esc(showText(c))}</div>\n        <div class=\"bg-note-comment\"${c.comment ? \"\" : \" hidden\"}>${icon(\"pen\")}<span>${esc(c.comment || \"\")}</span></div>\n    </div>`;\n}\n\n// Подставить прочитанный текст в уже отрисованный элемент (вызывает ui.js после дочитывания файлов)\nfunction fill(el, c) {\n    const set = (sel, text) => {\n        const node = el.querySelector(sel);\n        if (node && node.textContent !== text) node.textContent = text;\n    };\n    if (el.dataset.role === \"insight\") {\n        set(\".bg-insight-text\", showText(c));\n        return; // подпись под инсайтом — книга и автор, она не меняется\n    }\n    set(\".bg-quote-text\", showText(c));\n    set(\".bg-cap-text\", captionOf(c));\n    el.dataset.path = c.path;\n    const comment = el.querySelector(\".bg-note-comment\");\n    if (comment) {\n        comment.hidden = !c.comment;\n        const span = comment.querySelector(\"span\");\n        if (span && span.textContent !== (c.comment || \"\")) span.textContent = c.comment || \"\";\n    }\n}\n\n// ---------- два варианта вёрстки ----------\nconst kindClass = (kind) => (kind === \"featured\" ? \" bg-card--featured\" : kind === \"low\" ? \" bg-card--low\" : \"\");\n\n// Вертикальная карточка. Высота зависит от содержимого: пропорции обложки (ratio — высота к ширине)\n// и объёма текста. big — «большой» вариант: полная цитата с комментарием вместо короткого фрагмента\nfunction tall(b, kind, opts) {\n    const o = opts || {};\n    const flag = kind === \"low\" ? `<span class=\"bg-cover-flag bg-mono\">${esc(cfg.lowLabel)}</span>` : \"\";\n    return `\n<article class=\"bg-card bg-card--tall${o.big ? \" bg-card--big\" : \"\"}${kindClass(kind)}\" style=\"--ratio:${o.ratio || 1.5}\" ${openAttrs(b.path)}>\n    ${coverHtml(b, { overlay: flag })}\n    <div class=\"bg-card-body\">\n        <div class=\"bg-card-meta\">\n            ${genreHtml(b)}\n            <span class=\"bg-date bg-mono\">${esc(b.dateText)}</span>\n        </div>\n        <div class=\"bg-card-title\">${esc(b.title)}</div>\n        <div class=\"bg-card-author\">${esc(b.authorText || \"Неизвестен\")}</div>\n        ${o.big ? bigQuote(b) : snippet(b)}\n        ${statsRow(b)}\n    </div>\n</article>`;\n}\n\n// Широкая горизонтальная карточка: обложка слева, справа текст и случайная заметка\nfunction wide(b, kind) {\n    const head =\n        kind === \"featured\"\n            ? `<span class=\"bg-badge bg-badge--accent bg-mono\">${icon(\"badge\")}${esc(cfg.featuredLabel)}</span>`\n            : kind === \"low\"\n              ? `<span class=\"bg-badge bg-badge--danger bg-mono\">${icon(\"alert\")}${esc(cfg.lowLabel)}</span>`\n              : genreHtml(b);\n\n    const meta = [\n        kind === \"featured\" && b.genre ? `<div><div class=\"bg-meta-k bg-mono\">Жанр</div><div class=\"bg-meta-v\">${esc(b.genre)}</div></div>` : \"\",\n        b.notes ? `<div><div class=\"bg-meta-k bg-mono\">Заметки</div><div class=\"bg-meta-v bg-meta-v--accent bg-mono\">${esc(notesLabel(b.notes))}</div></div>` : \"\",\n        b.time ? `<div><div class=\"bg-meta-k bg-mono\">Время</div><div class=\"bg-meta-v bg-mono\">${esc(b.time)}</div></div>` : \"\",\n    ].join(\"\");\n\n    const foot =\n        kind === \"low\"\n            ? `<span class=\"bg-label-text bg-label-text--danger bg-mono\">${esc(b.label || b.genre)}</span>`\n            : `<div class=\"bg-tags-plain\">${b.tags.slice(0, 4).map((t) => `<span class=\"bg-tag-plain bg-mono\">${esc(t)}</span>`).join(\"\")}</div>`;\n\n    return `\n<article class=\"bg-card bg-card--wide${kindClass(kind)}\" ${openAttrs(b.path)}>\n    ${coverHtml(b, { tag: false, overlay: kind === \"low\" ? `<span class=\"bg-cover-flag bg-mono\">${esc(cfg.lowLabel)}</span>` : \"\" })}\n    <div class=\"bg-card-body\">\n        <div class=\"bg-card-meta\">\n            ${head}\n            <span class=\"bg-date bg-mono\">${esc(b.dateText)}</span>\n        </div>\n        <div class=\"bg-card-title bg-card-title--lg\">${esc(b.title)}</div>\n        <div class=\"bg-card-author\">${esc(b.authorText || \"Неизвестен\")}</div>\n        ${bigQuote(b)}\n        ${meta ? `<div class=\"bg-meta\">${meta}</div>` : \"\"}\n        <div class=\"bg-card-foot\">${foot}</div>\n    </div>\n</article>`;\n}\n\n// ---------- отбор ----------\n// Достаточно ли у книги текста для большой карточки\nconst isEligible = (b) => Notes.textLength(b) >= cfg.bigMinChars;\n\nconst isLow = (b) => b.score5 !== null && b.score5 < cfg.lowScore;\n\n// Главная карточка: лучшая по оценке книга выборки с достаточным текстом.\n// При равной оценке побеждает книга с большим числом заметок, затем самая свежая\nfunction pickFeatured(list) {\n    if (!cfg.featured) return null;\n    return (\n        list\n            .filter((b) => isEligible(b) && b.score5 !== null && b.score5 >= cfg.featuredMinScore)\n            .sort((a, b) => b.score5 - a.score5 || (b.notes || 0) - (a.notes || 0) || b.dateMs - a.dateMs)[0] || null\n    );\n}\n\n// Какие книги предпочтительно делать большими: «Книга года», «Разочарование» и лучшие по оценке,\n// пока не наберётся доля bigShare. Только из книг с достаточным текстом\nfunction pickBig(list, top) {\n    const big = new Set();\n    if (top) big.add(top);\n    list.filter((b) => isLow(b) && isEligible(b)).forEach((b) => big.add(b));\n    const target = Math.round(list.length * Math.max(0, Math.min(1, cfg.bigShare)));\n    const rest = list\n        .filter((b) => !big.has(b) && isEligible(b))\n        .sort((a, b) => (b.score5 ?? -1) - (a.score5 ?? -1) || Notes.textLength(b) - Notes.textLength(a));\n    for (const b of rest) {\n        if (big.size >= target) break;\n        big.add(b);\n    }\n    return big;\n}\n\n// ---------- раскладка: staggered grid ----------\n// Колонки одинаковой ширины, карточки разной высоты. Сетка — CSS Grid с мелкими строками (UNIT px):\n// высота каждой карточки измеряется, и она занимает столько строк, сколько ей нужно (grid-row-end: span N).\n// Режим dense кладёт каждую следующую карточку в самое высокое свободное место, то есть в самую низкую колонку.\n// Широкие карточки занимают две колонки и встречаются реже (wideShare).\nconst NOMINAL_W = 300;  // ширина колонки, на которую рассчитана оценка высоты до измерения\nconst UNIT = 4;         // высота строки сетки, px\nconst GAP = 16;\nconst RATIOS = [1.3, 1.5, 1.7]; // пропорции обложек (высота к ширине): их чередование даёт «ступеньки»\n\nconst hashOf = (s) => {\n    let h = 0;\n    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;\n    return h;\n};\n\n// Примерная высота карточки в пикселях — для первой отрисовки, до измерения\nfunction estimate(t) {\n    if (t.wide) return t.kind === \"featured\" ? 440 : 340;\n    const c = Notes.content(t.b);\n    const chars = c ? c.quote.length : 0;\n    const cover = NOMINAL_W * t.ratio;\n    const titleLines = Math.min(2, Math.ceil(t.b.title.length / 22));\n    let text = 0;\n    if (t.big && c) text = 44 + Math.min(7, Math.ceil(chars / 34)) * 21 + (c.comment ? 44 : 0);\n    else if (c) text = 22 + Math.min(3, Math.ceil(chars / 34)) * 19;\n    const stats = t.b.notes || t.b.label ? 40 : 0;\n    return 28 + cover + 14 + 18 + titleLines * 22 + 20 + (text ? text + 14 : 0) + stats + 14;\n}\n\nconst spanFor = (h, gap) => Math.max(1, Math.ceil((h + gap) / UNIT));\n\n// Какие книги получают широкую карточку (кроме «Книги года»): «Разочарование» и лучшие по оценке из книг\n// с достаточным текстом, но не больше wideShare от списка, не ближе MIN_GAP позиций друг к другу и не в самом хвосте\nconst MIN_GAP = 5;\nfunction pickWide(list, top, cols) {\n    const wide = new Set();\n    const share = Math.max(0, Math.min(1, Number(cfg.wideShare) || 0));\n    const target = Math.floor(list.length * share);\n    if (!target) return wide;\n    const index = new Map(list.map((b, i) => [b, i]));\n    const taken = [];\n    const candidates = list\n        // в конце списка широкая карточка оставила бы дыру рядом с собой: заполнять её уже нечем\n        .filter((b) => b !== top && isEligible(b) && index.get(b) < list.length - (cols + 2))\n        .sort((a, b) => (isLow(b) ? 1 : 0) - (isLow(a) ? 1 : 0) || (b.score5 ?? -1) - (a.score5 ?? -1) || Notes.textLength(b) - Notes.textLength(a));\n    for (const b of candidates) {\n        if (wide.size >= target) break;\n        const i = index.get(b);\n        if (taken.some((j) => Math.abs(i - j) < MIN_GAP)) continue; // широкие карточки не идут подряд\n        wide.add(b);\n        taken.push(i);\n    }\n    return wide;\n}\n\nfunction grid(list, cols) {\n    if (!list.length) return `<div class=\"bg-empty\">По этим фильтрам ничего не найдено</div>`;\n    const c = Math.max(2, cols || 4);\n\n    const top = pickFeatured(list);\n    const wides = pickWide(list, top, c);\n    const big = pickBig(list, top);\n    // главная карточка первая, остальные — в порядке сортировки\n    const ordered = top ? [top, ...list.filter((b) => b !== top)] : list;\n\n    const html = ordered\n        .map((b, index) => {\n            const kind = b === top ? \"featured\" : isLow(b) ? \"low\" : \"normal\";\n            const isWide = b === top || wides.has(b);\n            const isBig = !isWide && big.has(b) && isEligible(b);\n            // большая карточка получает более короткую обложку: на текст остаётся больше места\n            const ratio = isBig ? 1.2 : RATIOS[hashOf(b.path) % RATIOS.length];\n            const t = { b, kind, wide: isWide, big: isBig, ratio, index };\n            const card = isWide ? wide(b, kind) : tall(b, kind, t);\n            // стартовая высота по оценке; после вставки в страницу relayout() заменит её измеренной\n            const span = `grid-row-end:span ${spanFor(estimate(t), GAP)}`;\n            return card.includes(' style=\"') ? card.replace(' style=\"', ` style=\"${span};`) : card.replace(\"<article \", `<article style=\"${span}\" `);\n        })\n        .join(\"\");\n    return `<div class=\"bg-stagger\" style=\"--cols:${c}\">${html}</div>`;\n}\n\n// Подогнать сетку под реальные высоты карточек: вызывается после вставки HTML, после дочитывания текстов\n// и при изменении ширины блока. Меняет только grid-row-end (и только если значение изменилось).\n// Затем закрывает щели рядом с широкими карточками: рядом с широкой карточкой колонки могут оказаться\n// разной высоты, и в более низкой остаётся пустое место. Карточка над ним растягивается (растёт обложка).\nfunction relayout(root) {\n    const st = root && root.querySelector(\".bg-stagger\");\n    if (!st || !st.offsetWidth) return;\n    const gap = parseFloat(getComputedStyle(st).columnGap) || GAP;\n    const cards = [...st.children];\n\n    // растяжения прошлой раскладки сбрасываем: измерять надо естественную высоту\n    cards.forEach((card) => {\n        if (card.dataset.stretch) {\n            card.style.height = \"\";\n            card.classList.remove(\"is-stretched\");\n            delete card.dataset.stretch;\n        }\n    });\n\n    cards.forEach((c) => c.classList.remove(\"is-solo\"));\n\n    const setSpans = (list) => {\n        // сначала читаем все высоты, потом пишем: без перемешивания чтения и записи браузер не пересчитывает раскладку на каждой карточке\n        const heights = list.map((card) => card.getBoundingClientRect().height);\n        list.forEach((card, i) => {\n            const value = `span ${spanFor(heights[i], gap)}`;\n            if (card.style.gridRowEnd !== value) card.style.gridRowEnd = value;\n        });\n    };\n    setSpans(cards);\n\n    const wides = cards.filter((c) => c.classList.contains(\"bg-card--wide\"));\n    if (!wides.length) return;\n\n    const stretchPass = () => {\n        // После растяжения сетка перестраивается, поэтому щели ищем заново — несколько проходов\n        for (let pass = 0; pass < 4; pass++) {\n            const rects = new Map(cards.map((c) => [c, c.getBoundingClientRect()]));\n            const stretched = new Map();\n            for (const w of wides) {\n                if (w.classList.contains(\"is-solo\")) continue;\n                const wr = rects.get(w);\n                const above = new Map();\n                for (const a of cards) {\n                    if (a === w) continue;\n                    const ar = rects.get(a);\n                    if (ar.left < wr.left - 1 || ar.right > wr.right + 1 || ar.bottom > wr.top + 1) continue;\n                    const key = Math.round(ar.left);\n                    if (!above.has(key) || ar.bottom > rects.get(above.get(key)).bottom) above.set(key, a);\n                }\n                for (const a of above.values()) {\n                    const hole = wr.top - rects.get(a).bottom - gap;\n                    if (hole > 6) stretched.set(a, Math.max(stretched.get(a) || 0, hole));\n                }\n            }\n            if (!stretched.size) break;\n            for (const [a, hole] of stretched) {\n                a.style.height = `${rects.get(a).height + hole}px`;\n                a.classList.add(\"is-stretched\");\n                a.dataset.stretch = \"1\";\n            }\n            setSpans([...stretched.keys()]);\n        }\n    };\n\n    // Остаточные дыры по колонкам: широкая карточка, над которой они остались, становится обычной одноколоночной\n    const holeWides = () => {\n        const rects = new Map(cards.map((c) => [c, c.getBoundingClientRect()]));\n        const top = st.getBoundingClientRect().top;\n        const bad = new Set();\n        const xs = [...new Set([...rects.values()].map((r) => Math.round(r.left)))];\n        for (const x of xs) {\n            const col = cards.filter((c) => { const r = rects.get(c); return r.left - 1 <= x && r.right + 1 >= x + 10; })\n                .sort((a, b) => rects.get(a).top - rects.get(b).top);\n            let prev = top;\n            for (const c of col) {\n                const r = rects.get(c);\n                if (r.top - prev > 60 && c.classList.contains(\"bg-card--wide\")) bad.add(c);\n                prev = Math.max(prev, r.bottom);\n            }\n        }\n        return [...bad];\n    };\n\n    stretchPass();\n    for (let round = 0; round < 6; round++) {\n        const bad = holeWides();\n        if (!bad.length) break;\n        bad.forEach((c) => c.classList.add(\"is-solo\"));\n        cards.forEach((card) => {\n            if (card.dataset.stretch) { card.style.height = \"\"; card.classList.remove(\"is-stretched\"); delete card.dataset.stretch; }\n        });\n        setSpans(cards);\n        stretchPass();\n    }\n}\n\nmodule.exports = { grid, relayout, pickFeatured, quoteText, fill };\n","config":"// src/config.js — параметры по умолчанию и слияние: значения по умолчанию < настройки плагина < параметры блока.\n\nconst defaults = {\n    // --- данные ---\n    folder: \"Прочитанные книги\",      // папка с заметками о книгах (подпапки включены)\n    filterField: \"Прочитано\",         // поле-флаг; null или \"\" — не фильтровать\n    filterValue: true,                // нужное значение флага\n    fields: {                         // имена свойств во frontmatter\n        title: \"Название\",\n        author: \"Автор\",\n        genre: \"Жанр\",\n        rating: \"Оценка\",\n        date: \"Дата прочтения\",\n        cover: \"cover\",\n        // необязательные поля: если их нет, соответствующие блоки просто не показываются\n        quote: \"Цитата\",              // ключевая мысль / аннотация (карточки, инсайт месяца, поиск)\n        notes: \"Заметки\",             // ссылки на заметки книги (\"[[...]]\") или число заметок\n        label: \"Метка\",               // короткая пометка в подвале карточки («Тонкий юмор»)\n        time: \"Время чтения\",         // «16 ч 40 м» (показывается в главной карточке)\n        pages: \"Страниц\",             // число страниц (для статистики месяца)\n    },\n    ratingMax: 10,                    // шкала оценки в заметках (в интерфейсе всегда 5 звёзд)\n    dateFormat: \"dd MMMM yyyy\",       // формат даты: yyyy yy MMMM MMM MM M dd d EEEE EEE (YYYY тоже понимается)\n    dateLocale: \"ru\",                 // язык названий месяцев и дней недели\n\n    // --- заметки и цитаты ---\n    sourceField: \"Источник\",          // свойство заметки-цитаты, указывающее на книгу (название или ссылка)\n    notesFolder: null,                // папка с заметками-цитатами; null — искать по всему хранилищу\n\n    // --- оформление ---\n    title: \"Каталог прочитанных книг\", // заголовок над галереей; \"\" — не показывать\n    showStats: true,                  // блок «месяц + инсайт»\n    showPulse: true,                  // виджет «Пульс прочитанных за год»\n    showProgress: true,               // инфокарточки о прогрессе под «Пульсом года»\n    yearGoal: 0,                      // план на год, книг (0 — не задан)\n    yearGoalPages: 0,                 // план на год, страниц (0 — не задан)\n    yearGoals: null,                  // свой план для отдельных лет: { 2025: 40, 2026: 52 } (только в блоке кода)\n    tagsCollapsed: false,             // панель тегов свёрнута по умолчанию (дальше запоминается выбор)\n    wideShare: 0.12,                  // доля широких карточек (на две колонки) в сетке; «Книга года» не считается, 0 — без широких\n    bigShare: 0.4,                    // доля больших карточек в сетке среди книг, у которых достаточно текста\n    bigMinChars: 90,                  // минимум символов текста, чтобы книга могла получить большую карточку\n    coverFromBody: true,              // нет файла обложки (или свойство cover пустое) — взять первую картинку из текста заметки\n    showExcerpt: true,                // если у книги нет заметок и цитаты, показывать отрывок из её собственной заметки\n    excerptChars: 420,                // длина отрывка\n    showFooter: true,                 // строка «загружено N записей» внизу\n    addButton: true,                  // кнопка «Добавить книгу» (создаёт заметку в folder)\n    coverFit: \"cover\",                // обложки в карточках: \"cover\" — заполнить и обрезать по краям, \"contain\" — показать целиком\n    featured: true,                   // большая карточка для лучшей книги (в режиме карточек)\n    featuredMinScore: 4.5,            // минимальная оценка (по 5-балльной шкале) для главной карточки\n    featuredLabel: \"Книга года · топ 1\",\n    lowScore: 2,                      // оценка ниже этой — карточка «Разочарование» (по 5-балльной шкале)\n    lowLabel: \"Разочарование\",\n\n    // --- поведение ---\n    openInNewTab: true,               // true — заметка открывается в новой вкладке\n    defaultView: \"cards\",             // \"cards\" | \"list\"\n    defaultSort: \"date_desc\",         // date_desc | date_asc | rating_desc | rating_asc | title_asc | title_desc\n    tagMode: \"any\",                   // \"any\" — книга подходит, если есть любой из выбранных тегов; \"all\" — все сразу\n    storageKey: \"obsidian-book-gallery-view\",\n    searchDebounce: 150,              // мс\n\n    // --- ширина заметки ---\n    fullWidth: false,                 // растянуть заметку на всю ширину (вместо cssclasses)\n    fullWidthClasses: [\"max\", \"full-width\"],\n\n    // --- файлы ---\n    cssFiles: [\"theme\", \"base\", \"header\", \"stats\", \"filters\", \"cards\", \"list\", \"layout\"], // порядок подключения styles/*.css\n};\n\n// Слияние нескольких слоёв настроек; вложенный объект fields сливается по ключам\nfunction build(...layers) {\n    const out = Object.assign({}, defaults);\n    out.fields = Object.assign({}, defaults.fields);\n    layers.forEach((layer) => {\n        if (!layer || typeof layer !== \"object\") return;\n        Object.keys(layer).forEach((k) => {\n            if (k === \"fields\") Object.assign(out.fields, layer.fields || {});\n            else if (layer[k] !== undefined) out[k] = layer[k];\n        });\n    });\n    // числа и логические значения из YAML бывают строками\n    [\"bigShare\", \"bigMinChars\", \"excerptChars\", \"ratingMax\", \"featuredMinScore\", \"lowScore\", \"searchDebounce\", \"yearGoal\", \"yearGoalPages\", \"wideShare\"].forEach((k) => {\n        const n = parseFloat(String(out[k]).replace(\",\", \".\"));\n        out[k] = Number.isNaN(n) ? defaults[k] : n;\n    });\n    if (!out.ratingMax || out.ratingMax <= 0) out.ratingMax = defaults.ratingMax;\n    return out;\n}\n\nmodule.exports = { defaults, build };\n","data":"// src/data.js — выборка заметок о книгах из хранилища Obsidian (metadataCache) и приведение к единому виду.\n// Dataview не нужен: свойства читаются из frontmatter, теги — из кэша метаданных.\n\nconst { cfg, app, obsidian } = ctx;\nconst U = ctx.lib.utils;\nconst F = cfg.fields;\n\n// Заглушка для списка, когда у книги нет обложки\nconst EMPTY_COVER =\n    \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMzAwIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjMwMCIgZmlsbD0iIzJlMzQzOCIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBkb21pbmFudC1iYXNlbGluZT0ibWlkZGxlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOGE5Mjk3IiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNiI+0J3QtdGCINC+0LHQu9C+0LbQutC4PC90ZXh0Pjwvc3ZnPg==\";\n\nconst byScore = (a, b) => (a.score5 ?? -1) - (b.score5 ?? -1);\n\nconst SORTS = {\n    date_desc: { label: \"Сначала новые\", fn: (a, b) => b.dateMs - a.dateMs },\n    date_asc: { label: \"Сначала старые\", fn: (a, b) => a.dateMs - b.dateMs },\n    rating_desc: { label: \"Оценка: по убыванию\", fn: (a, b) => byScore(b, a) || b.dateMs - a.dateMs },\n    rating_asc: { label: \"Оценка: по возрастанию\", fn: (a, b) => byScore(a, b) || b.dateMs - a.dateMs },\n    title_asc: { label: \"Название (А-Я)\", fn: (a, b) => a.titleKey.localeCompare(b.titleKey, \"ru\") },\n    title_desc: { label: \"Название (Я-А)\", fn: (a, b) => b.titleKey.localeCompare(a.titleKey, \"ru\") },\n};\n\n// Оценка по шкале ratingMax -> число от 0 до 5 или null\nfunction toScore5(raw) {\n    const n = U.toNumber(U.toArray(raw)[0]);\n    if (n === null) return null;\n    return (Math.max(0, Math.min(cfg.ratingMax, n)) / cfg.ratingMax) * 5;\n}\n\n// 4.5 -> пять звёзд (HTML) для режима «Список»\nfunction starsHtml(score5) {\n    if (score5 === null) return \"—\";\n    const full = Math.floor(score5);\n    const half = score5 % 1 >= 0.5 ? 1 : 0;\n    const empty = Math.max(0, 5 - full - half);\n    return (\n        (full ? `<span class=\"star-full\">${\"★\".repeat(full)}</span>` : \"\") +\n        (half ? `<span class=\"star-half\">★</span>` : \"\") +\n        (empty ? `<span class=\"star-empty\">${\"★\".repeat(empty)}</span>` : \"\")\n    );\n}\n\n// \"[[Имя|псевдоним]]\" / \"Имя\" -> цель ссылки (\"Имя\") или null\nconst linkTarget = (item) => {\n    const s = String(item ?? \"\").trim().replace(/^!/, \"\").replace(/^[\"']|[\"']$/g, \"\");\n    const m = s.match(/^\\[\\[([^\\]]+)\\]\\]$/);\n    return (m ? m[1] : s).split(\"|\")[0].split(\"#\")[0].trim() || null;\n};\n\n// Значение обложки -> текст ссылки: [[файл|300]], ![[файл]], ![](путь), «файл.jpg», URL\nfunction coverTarget(value) {\n    let s = String(value ?? \"\").trim().replace(/^[\"']|[\"']$/g, \"\");\n    if (!s) return null;\n    const md = s.match(/^!?\\[[^\\]]*\\]\\(([^)]+)\\)$/); // ![alt](путь)\n    if (md) s = md[1].trim().replace(/^<|>$/g, \"\");\n    const wiki = s.match(/^!?\\[\\[([^\\]]+)\\]\\]$/);\n    if (wiki) s = wiki[1];\n    s = s.split(\"|\")[0].split(\"#\")[0].trim();\n    return s || null;\n}\n\nconst IMG_EXT = /\\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i;\nconst nfc = (x) => String(x).normalize(\"NFC\");\n\n// Файлы хранилища по имени (без учёта регистра и формы Unicode: macOS хранит имена в NFD) —\n// запасной путь, когда ссылка не разрешилась обычным способом\nlet filesByName = null;\nconst findByName = (name) => {\n    if (!filesByName) {\n        filesByName = new Map();\n        for (const f of app.vault.getFiles()) {\n            const k = nfc(f.name).toLowerCase();\n            if (!filesByName.has(k)) filesByName.set(k, f);\n        }\n    }\n    return filesByName.get(nfc(String(name).split(\"/\").pop()).toLowerCase());\n};\n\n// Файл по тексту ссылки: как есть, в разных формах Unicode, по полному пути, по имени\nfunction findFile(text, sourcePath) {\n    let decoded = text;\n    try { decoded = decodeURIComponent(text); } catch (e) { /* не URL-кодирована */ }\n    const variants = [text, decoded];\n    [text, decoded].forEach((v) => variants.push(v.normalize(\"NFC\"), v.normalize(\"NFD\")));\n    for (const v of new Set(variants)) {\n        const file = app.metadataCache.getFirstLinkpathDest(v, sourcePath) || app.vault.getAbstractFileByPath(v);\n        if (file && file.extension) return file;\n    }\n    return typeof app.vault.getFiles === \"function\" ? findByName(decoded) || null : null;\n}\n\n// Первая картинка, встроенная в текст заметки (![[файл.webp|457x724]])\nfunction firstEmbeddedImage(cache, sourcePath) {\n    for (const e of (cache && cache.embeds) || []) {\n        const link = String((e && e.link) || \"\").split(\"#\")[0].split(\"|\")[0].trim();\n        if (!link || !IMG_EXT.test(link)) continue;\n        const file = app.metadataCache.getFirstLinkpathDest(link, sourcePath) || findFile(link, sourcePath);\n        if (file) return file;\n    }\n    return null;\n}\n\n// Обложка -> { set: задано ли свойство, url: адрес картинки или null, raw: значение свойства }.\n// Порядок: файл из свойства → первая картинка из текста заметки (если coverFromBody)\nfunction resolveCover(fm, cache, sourcePath) {\n    const raw = coverTarget(U.toArray(U.prop(fm, F.cover))[0]);\n    try {\n        if (raw && /^(https?:|data:)/i.test(raw)) return { set: true, url: raw, raw };\n        let file = raw ? findFile(raw, sourcePath) : null;\n        if (!file && cfg.coverFromBody) file = firstEmbeddedImage(cache, sourcePath);\n        return { set: !!raw, url: file ? app.vault.getResourcePath(file) : null, raw };\n    } catch (e) {\n        return { set: !!raw, url: null, raw };\n    }\n}\n\n// Ссылка на заметку из свойства -> путь к файлу или null\nfunction linkTargetPath(item, sourcePath) {\n    if (typeof item !== \"string\") return null;\n    if (!/^\\s*!?\\[\\[/.test(item)) return null;\n    const target = linkTarget(item);\n    if (!target) return null;\n    const file = app.metadataCache.getFirstLinkpathDest(target, sourcePath);\n    return file ? file.path : null;\n}\n\nconst firstText = (v) => {\n    const s = U.toArray(v).map(U.itemToString)[0];\n    return s ? String(s).trim() : \"\";\n};\n\n// Теги заметки: из frontmatter и из текста, вместе с «#»\nfunction tagsOf(cache) {\n    try {\n        const list = obsidian.getAllTags(cache) || [];\n        return Array.from(new Set(list));\n    } catch (e) {\n        return [];\n    }\n}\n\n// Сколько заметок ссылается на каждую (для запасного счётчика заметок)\nfunction inlinkCounts() {\n    const counts = new Map();\n    const links = app.metadataCache.resolvedLinks || {};\n    for (const src of Object.keys(links)) {\n        for (const dest of Object.keys(links[src])) counts.set(dest, (counts.get(dest) || 0) + 1);\n    }\n    return counts;\n}\n\nconst sameFlag = (value, want) => {\n    if (typeof want === \"boolean\") return value === want || String(value).toLowerCase() === String(want);\n    return String(value) === String(want);\n};\n\n// Заметки из папки книг (с подпапками), для которых есть кэш метаданных\nfunction bookFiles() {\n    const folder = U.normFolder(cfg.folder);\n    const prefix = folder ? folder + \"/\" : \"\";\n    return app.vault.getMarkdownFiles().filter((f) => !prefix || f.path.startsWith(prefix));\n}\n\n// Загрузить книги и один раз привести к удобному для отрисовки виду\nfunction loadBooks() {\n    const inlinks = inlinkCounts();\n    const books = [];\n    filesByName = null;\n    const coverStats = { set: 0, found: 0, missing: [] };\n\n    for (const file of bookFiles()) {\n        const cache = app.metadataCache.getFileCache(file);\n        const fm = (cache && cache.frontmatter) || {};\n        if (cfg.filterField && !sameFlag(U.prop(fm, cfg.filterField), cfg.filterValue)) continue;\n\n        const title = String(U.toArray(U.prop(fm, F.title))[0] || file.basename);\n        const authors = U.splitList(U.prop(fm, F.author));\n        const genres = U.splitList(U.prop(fm, F.genre));\n        const dateMs = U.toMillis(U.prop(fm, F.date));\n        const score5 = toScore5(U.prop(fm, F.rating));\n        const quote = firstText(U.prop(fm, F.quote));\n        const timeRaw = U.toArray(U.prop(fm, F.time))[0];\n\n        // свойство «Заметки»: ссылки на заметки и/или число\n        let notesNum = null;\n        const noteLinks = [];\n        U.toArray(U.prop(fm, F.notes)).forEach((item) => {\n            const path = linkTargetPath(item, file.path);\n            if (path) noteLinks.push(path);\n            else if (notesNum === null) notesNum = U.toNumber(item);\n        });\n\n        const cov = resolveCover(fm, cache, file.path);\n        if (cov.set) {\n            coverStats.set++;\n            if (cov.url) coverStats.found++;\n            else if (coverStats.missing.length < 5) coverStats.missing.push(`${file.basename}: ${cov.raw ?? \"?\"}`);\n        }\n\n        books.push({\n            path: file.path,\n            title,\n            titleKey: title.toLowerCase(),\n            authors,\n            genres,\n            genre: genres[0] || \"\",\n            tags: tagsOf(cache),\n            authorText: authors.join(\", \"),\n            genresText: genres.join(\", \"),\n            score5,\n            scoreText: score5 === null ? \"\" : score5.toFixed(1),\n            dateMs,\n            dateText: U.formatDate(dateMs, cfg.dateFormat, cfg.dateLocale),\n            cover: cov.url,\n            quote,\n            fileKey: file.basename.toLowerCase(),\n            notesNum,                       // число из свойства (если задано)\n            noteLinks,                      // пути заметок из свойства «Заметки»\n            noteList: [],                   // все заметки книги (заполняет src/notes.js)\n            inlinks: inlinks.get(file.path) || 0,\n            notes: notesNum ?? 0,           // итоговое число заметок (уточняет src/notes.js)\n            label: firstText(U.prop(fm, F.label)),\n            time: typeof timeRaw === \"number\" ? `${timeRaw} ч` : firstText(timeRaw),\n            pages: U.toNumber(U.toArray(U.prop(fm, F.pages))[0]),\n            searchText: [title, authors.join(\" \"), genres.join(\" \"), quote].join(\" \").toLowerCase(),\n        });\n    }\n    if (coverStats.set > coverStats.found) {\n        console.warn(`book-gallery: обложка не найдена у ${coverStats.set - coverStats.found} из ${coverStats.set} книг. Примеры:`, coverStats.missing);\n    }\n    books.coverStats = coverStats;\n    return books;\n}\n\n// Отсортированные уникальные значения поля (авторы, жанры, теги) для фильтров\nconst uniqueValues = (books, key) =>\n    Array.from(new Set(books.flatMap((b) => b[key]))).sort((a, b) => a.localeCompare(b, \"ru\"));\n\nmodule.exports = { SORTS, EMPTY_COVER, starsHtml, loadBooks, uniqueValues, linkTarget };\n","filters":"// lib/filters.js — состояние фильтров и отбор книг. Без DOM.\n\nconst { cfg } = ctx;\nconst { SORTS } = ctx.lib.data;\n\n// Фильтр по оценке (по 5-балльной шкале) — строгий: «3» это только 3.0 и 3.5, а не «3 и выше».\n// При шкале 10 баллов: 5 = 10; 4 = 8–9; 3 = 6–7; 2 = 4–5; «меньше 2» = 0–3.\nconst starsOf = (b) => (b.score5 === null ? null : Math.min(5, Math.floor(b.score5 + 1e-9)));\nconst SCORE_FILTERS = {\n    all: () => true,\n    \"5\": (b) => starsOf(b) === 5,\n    \"4\": (b) => starsOf(b) === 4,\n    \"3\": (b) => starsOf(b) === 3,\n    \"2\": (b) => starsOf(b) === 2,\n    low: (b) => b.score5 !== null && b.score5 < 2,\n};\n\n// Ключ месяца для фильтра: \"2026-09\"\nconst monthKey = (ms) => {\n    const d = new Date(ms);\n    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, \"0\")}`;\n};\n\nconst createState = () => ({\n    search: \"\",\n    author: \"all\",\n    genre: \"all\",\n    tags: new Set(),\n    tagQuery: \"\",   // строка поиска среди чипов тегов, на книги не влияет\n    score: \"all\",\n    month: null,    // \"2026-09\" — книги, прочитанные в этом месяце (клик по столбцу «Пульса»)\n    sort: SORTS[cfg.defaultSort] ? cfg.defaultSort : \"date_desc\",\n});\n\nfunction matches(b, st, q) {\n    if (q && !b.searchText.includes(q)) return false;\n    if (st.author !== \"all\" && !b.authors.includes(st.author)) return false;\n    if (st.genre !== \"all\" && !b.genres.includes(st.genre)) return false;\n    if (!SCORE_FILTERS[st.score](b)) return false;\n    if (st.month && (!b.dateMs || monthKey(b.dateMs) !== st.month)) return false;\n    if (st.tags.size) {\n        const picked = [...st.tags];\n        const ok = cfg.tagMode === \"all\" ? picked.every((t) => b.tags.includes(t)) : picked.some((t) => b.tags.includes(t));\n        if (!ok) return false;\n    }\n    return true;\n}\n\nfunction apply(books, st) {\n    const q = st.search.trim().toLowerCase();\n    return books.filter((b) => matches(b, st, q)).sort(SORTS[st.sort].fn);\n}\n\n// Сколько всего книг подходит под каждый вариант фильтра по оценке\nconst scoreCounts = (books) =>\n    Object.fromEntries(Object.entries(SCORE_FILTERS).map(([id, fn]) => [id, books.filter(fn).length]));\n\n// Число включённых фильтров (для бейджа «N активных»)\nconst activeCount = (st) =>\n    (st.search.trim() ? 1 : 0) + (st.author !== \"all\" ? 1 : 0) + (st.genre !== \"all\" ? 1 : 0) + st.tags.size + (st.score !== \"all\" ? 1 : 0) + (st.month ? 1 : 0);\n\nfunction reset(st) {\n    Object.assign(st, createState(), { sort: st.sort });\n}\n\nmodule.exports = { createState, apply, scoreCounts, activeCount, reset, monthKey };\n","icons":"// lib/icons.js — набор встроенных SVG-иконок (контурные, 24×24, цвет берётся из currentColor).\n\nconst PATHS = {\n    search: '<circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/>',\n    plus: '<path d=\"M5 12h14M12 5v14\"/>',\n    hash: '<path d=\"M4 9h16M4 15h16M10 3 8 21M16 3l-2 18\"/>',\n    \"chevron-down\": '<path d=\"m6 9 6 6 6-6\"/>',\n    \"chevron-up\": '<path d=\"m18 15-6-6-6 6\"/>',\n    sliders: '<path d=\"M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4\"/>',\n    grid: '<rect x=\"3\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/>',\n    list: '<path d=\"M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01\"/>',\n    reset: '<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"/><path d=\"M3 3v5h5\"/>',\n    trend: '<path d=\"m22 7-8.5 8.5-5-5L2 17\"/><path d=\"M16 7h6v6\"/>',\n    link: '<path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/>',\n    file: '<path d=\"M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z\"/><path d=\"M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8\"/>',\n    book: '<path d=\"M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z\"/><path d=\"M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z\"/>',\n    user: '<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\"/><circle cx=\"12\" cy=\"7\" r=\"4\"/>',\n    shapes: '<path d=\"M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\" rx=\"1\"/><circle cx=\"17.5\" cy=\"17.5\" r=\"3.5\"/>',\n    star: '<polygon points=\"12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2\"/>',\n    \"thumbs-down\": '<path d=\"M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z\"/>',\n    badge: '<path d=\"M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z\"/><path d=\"m9 12 2 2 4-4\"/>',\n    alert: '<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4M12 17h.01\"/>',\n    pen: '<path d=\"M12 20h9\"/><path d=\"M16.38 3.62a1 1 0 0 1 3 3L7.37 18.64a2 2 0 0 1-.86.5l-2.87.84a.5.5 0 0 1-.62-.62l.84-2.87a2 2 0 0 1 .5-.86z\"/>',\n    quote: '<path d=\"M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z\"/><path d=\"M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z\"/>',\n    pulse: '<path d=\"M22 12h-4l-3 9L9 3l-3 9H2\"/>',\n    \"chevron-left\": '<path d=\"m15 18-6-6 6-6\"/>',\n    \"chevron-right\": '<path d=\"m9 18 6-6-6-6\"/>',\n    database: '<ellipse cx=\"12\" cy=\"5\" rx=\"9\" ry=\"3\"/><path d=\"M3 5v14a9 3 0 0 0 18 0V5M3 12a9 3 0 0 0 18 0\"/>',\n};\n\n// icon(\"star\", \"bg-ico--fill\") -> <svg>…</svg>\nfunction icon(name, cls) {\n    const body = PATHS[name];\n    if (!body) return \"\";\n    return `<svg class=\"bg-ico${cls ? \" \" + cls : \"\"}\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">${body}</svg>`;\n}\n\nmodule.exports = { icon };\n","layout":"// src/layout.js — ширина заметки на весь экран (опция fullWidth).\n//\n// Obsidian ограничивает ширину текста через --file-line-width и max-width у контейнеров\n// .markdown-preview-sizer (чтение) и .cm-sizer (редактирование). Классы из cssclasses\n// Obsidian вешает на .markdown-preview-view / .markdown-source-view. Делаем то же самое\n// из скрипта и дублируем inline-стилями, чтобы результат не зависел от порядка отрисовки.\n\nconst SIZERS = \".markdown-preview-sizer, .cm-sizer\";\nconst HOSTS = \".markdown-preview-view, .markdown-source-view\";\nconst OWN_CLASS = \"book-gallery-fw\";\n\nfunction apply(container) {\n    const { cfg } = ctx;\n    if (!cfg.fullWidth) return;\n\n    const classes = [OWN_CLASS, ...ctx.lib.utils.toStringList(cfg.fullWidthClasses)];\n    container.classList.add(\"book-gallery-root\");\n\n    let host = null;\n    let observer = null;\n    let frame = 0;\n    let tries = 0;\n    let alive = true;\n\n    const stretch = (node) => {\n        // запоминаем, какие классы добавили мы, чтобы потом убрать только их\n        if (!node._bgAdded) node._bgAdded = classes.filter((c) => !node.classList.contains(c));\n        // меняем DOM только если что-то реально отсутствует: лишняя запись класса снова разбудила бы наблюдатель\n        const missing = classes.filter((c) => !node.classList.contains(c));\n        if (missing.length) node.classList.add(...missing);\n        if (node.style.getPropertyValue(\"--file-line-width\") !== \"100%\") node.style.setProperty(\"--file-line-width\", \"100%\");\n        node.querySelectorAll(SIZERS).forEach((s) => {\n            if (s.style.getPropertyValue(\"max-width\") !== \"100%\") s.style.setProperty(\"max-width\", \"100%\", \"important\");\n        });\n    };\n\n    const restore = (node) => {\n        node.classList.remove(...(node._bgAdded || []));\n        delete node._bgAdded;\n        node.style.removeProperty(\"--file-line-width\");\n        node.querySelectorAll(SIZERS).forEach((s) => s.style.removeProperty(\"max-width\"));\n    };\n\n    const attach = () => {\n        if (!alive) return;\n        host = container.closest(HOSTS);\n        if (!host) {\n            // в режиме чтения блок бывает ещё не вставлен в страницу — повторяем\n            if (tries++ < 120) frame = requestAnimationFrame(attach);\n            return;\n        }\n        stretch(host);\n        // Obsidian может перезаписать классы при перерисовке — возвращаем свои\n        observer = new MutationObserver(() => stretch(host));\n        observer.observe(host, { attributes: true, attributeFilter: [\"class\"], subtree: false });\n    };\n    attach();\n\n    // Блок выгружается (переход на другую заметку, перерисовка): убираем стили,\n    // но только если на странице не осталось ни одной галереи\n    ctx.component?.register(() => {\n        alive = false;\n        observer?.disconnect();\n        cancelAnimationFrame(frame);\n        const node = host;\n        setTimeout(() => {\n            if (node && !node.querySelector(\".book-gallery-root\")) restore(node);\n        }, 300);\n    });\n}\n\nmodule.exports = { apply };\n","list":"// lib/list.js — режим «Список»: таблица. Название — обычная внутренняя ссылка Obsidian,\n// поэтому превью при наведении работает; клик обрабатывает ui.js.\n\nconst { esc } = ctx.lib.utils;\nconst { icon } = ctx.lib.icons;\nconst { starsHtml, EMPTY_COVER } = ctx.lib.data;\nconst Thumbs = ctx.lib.thumbs;\n\nconst tagsHtml = (tags, selected) =>\n    tags.length\n        ? tags\n              .map((t) => `<button type=\"button\" class=\"bg-chip bg-chip--sm bg-mono${selected.has(t) ? \" is-on\" : \"\"}\" data-action=\"tag\" data-tag=\"${esc(t)}\">${esc(t)}</button>`)\n              .join(\" \")\n        : \"—\";\n\nfunction table(list, selectedTags) {\n    if (!list.length) return `<div class=\"bg-empty\">По этим фильтрам ничего не найдено</div>`;\n\n    const rows = list\n        .map(\n            (b) => `\n    <tr>\n        <td>${b.cover ? Thumbs.imgTag(b.cover, \"bg-thumb\") : `<img class=\"bg-thumb\" src=\"${esc(EMPTY_COVER)}\" alt=\"\">`}</td>\n        <td><a class=\"internal-link bg-list-title\" data-href=\"${esc(b.path)}\" href=\"${esc(b.path)}\">${esc(b.title)}</a></td>\n        <td>${esc(b.authorText || \"—\")}</td>\n        <td>${esc(b.genresText || \"—\")}</td>\n        <td>${tagsHtml(b.tags, selectedTags)}</td>\n        <td class=\"bg-nowrap\"><span class=\"bg-stars\">${starsHtml(b.score5)}</span>${b.scoreText ? ` <span class=\"bg-mono bg-score-num\">${b.scoreText}</span>` : \"\"}</td>\n        <td class=\"bg-mono bg-nowrap\">${esc(b.dateText || \"—\")}</td>\n    </tr>`\n        )\n        .join(\"\");\n\n    return `\n<div class=\"bg-list-wrap\">\n<table class=\"bg-list\">\n    <thead><tr>\n        <th></th><th>Название</th><th>Автор</th><th>Жанр</th><th>Теги</th><th>Оценка</th><th>Дата</th>\n    </tr></thead>\n    <tbody>${rows}</tbody>\n</table>\n</div>`;\n}\n\nmodule.exports = { table };\n","notes":"// src/notes.js — тексты для карточек: заметки и цитаты книги, отрывок из заметки самой книги.\n//\n// Источники текста по приоритету:\n//   1. случайная заметка-цитата книги (файл со свойством `Источник` или ссылка из свойства `Заметки`);\n//   2. свойство книги `Цитата`;\n//   3. отрывок из текста самой заметки книги (первые абзацы без служебной разметки).\n// Файлы читаются заранее (preload) ограниченным числом потоков, чтобы раскладка знала, сколько\n// текста у каждой книги: книги с небольшим текстом не получают большую карточку.\n\nconst { cfg, app } = ctx;\nconst U = ctx.lib.utils;\n\nconst booksByPath = new Map();  // путь книги -> книга\nconst parsedCache = new Map();  // путь заметки -> { quote, comment } | null\nconst picked = new Map();       // путь книги -> { note, quote, comment }\nconst excerpts = new Map();     // путь книги -> текст отрывка (\"\" — отрывка нет)\n\nconst stripLink = (s) => String(s).replace(/^\\[\\[|\\]\\]$/g, \"\").split(\"|\")[0].split(\"#\")[0].trim();\nconst baseName = (s) => String(s).split(\"/\").pop().replace(/\\.md$/i, \"\").toLowerCase();\n\n// ---------- индекс: какие заметки относятся к каким книгам ----------\nfunction buildIndex(books) {\n    booksByPath.clear();\n    picked.clear();\n    const lookup = new Map();\n    books.forEach((b) => {\n        booksByPath.set(b.path, b);\n        [b.titleKey, b.fileKey, b.path.toLowerCase()].forEach((k) => lookup.set(k, b));\n    });\n\n    const index = new Map(books.map((b) => [b.path, new Map()]));\n    const add = (b, path, name) => {\n        if (path !== b.path) index.get(b.path).set(path, { path, name: name || baseName(path) });\n    };\n\n    // 1. ссылки из свойства книги «Заметки»\n    books.forEach((b) => b.noteLinks.forEach((path) => add(b, path)));\n\n    // 2. заметки с полем «Источник», указывающим на книгу\n    try {\n        const folder = U.normFolder(cfg.notesFolder);\n        const prefix = folder ? folder + \"/\" : \"\";\n        for (const file of app.vault.getMarkdownFiles()) {\n            if (booksByPath.has(file.path) || (prefix && !file.path.startsWith(prefix))) continue;\n            const cache = app.metadataCache.getFileCache(file);\n            const fm = cache && cache.frontmatter;\n            const sourceValue = U.prop(fm, cfg.sourceField);\n            if (!sourceValue) continue;\n            U.toArray(sourceValue).forEach((s) => {\n                const raw = stripLink(s);\n                if (!raw) return;\n                let b = lookup.get(raw.toLowerCase()) || lookup.get(baseName(raw));\n                if (!b) {\n                    const dest = app.metadataCache.getFirstLinkpathDest(raw, file.path);\n                    if (dest) b = booksByPath.get(dest.path);\n                }\n                if (b) add(b, file.path, file.basename);\n            });\n        }\n    } catch (e) {\n        console.warn(\"book-gallery: не удалось собрать заметки-цитаты\", e);\n    }\n\n    books.forEach((b) => {\n        b.noteList = [...index.get(b.path).values()];\n        b.notes = b.notesNum ?? (b.noteList.length || b.inlinks);\n    });\n}\n\n// ---------- разбор текста ----------\nfunction clean(s) {\n    return String(s)\n        .replace(/\\[![^\\]]+\\][+-]?/g, \"\")\n        .replace(/\\[\\[([^\\]|]+)\\|([^\\]]+)\\]\\]/g, \"$2\")\n        .replace(/\\[\\[([^\\]]+)\\]\\]/g, \"$1\")\n        .replace(/\\[([^\\]]+)\\]\\([^)]*\\)/g, \"$1\")\n        .replace(/(\\*\\*|__|==|~~)/g, \"\")\n        .replace(/^\\s*>+\\s?/gm, \"\")\n        .replace(/\\s+/g, \" \")\n        .trim();\n}\n\nconst LABEL = /^(#{1,6}\\s*)?(note|quote|notes|цитата|заметка|заметки)\\s*:?\\s*$/i;\n\n// Заметка-цитата: первая строка-метка отбрасывается, первый абзац — цитата, остальное — комментарий\nfunction parse(raw) {\n    const text = String(raw).replace(/^\\uFEFF/, \"\").replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---[ \\t]*(?:\\r?\\n|$)/, \"\");\n    const lines = text.split(/\\r?\\n/);\n    while (lines.length && !lines[0].trim()) lines.shift();\n\n    // callout: «> [!quote]» — цитата внутри блока, остальное — комментарий\n    if (lines.length && /^>\\s*\\[![^\\]]+\\]/.test(lines[0])) {\n        let i = 1;\n        const inner = [];\n        while (i < lines.length && /^>/.test(lines[i])) inner.push(lines[i++]);\n        const quote = clean(inner.map((l) => l.replace(/^>+\\s?/, \"\")).join(\" \"));\n        return quote ? { quote, comment: clean(lines.slice(i).join(\" \")) } : null;\n    }\n\n    while (lines.length && LABEL.test(lines[0].trim())) lines.shift();\n    const body = lines.join(\"\\n\").trim();\n    if (!body) return null;\n\n    let blocks = body.split(/\\n\\s*\\n/).map((b) => b.trim()).filter(Boolean);\n    if (blocks.length === 1) blocks = body.split(\"\\n\").map((b) => b.trim()).filter(Boolean);\n    const quote = clean(blocks[0]);\n    return quote ? { quote, comment: clean(blocks.slice(1).join(\" \")) } : null;\n}\n\n// Отрывок из заметки книги: первые «живые» абзацы без заголовков, таблиц, встраиваний и кода\nfunction parseExcerpt(raw, max) {\n    let t = String(raw).replace(/^\\uFEFF/, \"\").replace(/^---\\r?\\n[\\s\\S]*?\\r?\\n---[ \\t]*(?:\\r?\\n|$)/, \"\");\n    t = t\n        .replace(/```[\\s\\S]*?```/g, \"\")\n        .replace(/~~~[\\s\\S]*?~~~/g, \"\")\n        .replace(/%%[\\s\\S]*?%%/g, \"\")\n        .replace(/<!--[\\s\\S]*?-->/g, \"\");\n\n    const parts = [];\n    let len = 0;\n    for (const block of t.split(/\\n\\s*\\n/)) {\n        const lines = block.split(\"\\n\").map((l) => l.trim()).filter(Boolean);\n        if (!lines.length) continue;\n        if (/^(#{1,6}\\s|\\||!\\[|<|>|-{3,}$|\\*{3,}$|\\^|\\$\\$)/.test(lines[0])) continue; // заголовки, таблицы, встраивания, callout и цитаты — не проза книги\n        const text = clean(\n            lines\n                .join(\" \")\n                .replace(/!\\[\\[[^\\]]*\\]\\]/g, \"\")\n                .replace(/!\\[[^\\]]*\\]\\([^)]*\\)/g, \"\")\n                .replace(/(^|\\s)#[\\p{L}\\d_/-]+/gu, \" \")\n        );\n        if (text.length < 25) continue;\n        parts.push(text);\n        len += text.length;\n        if (len >= max) break;\n    }\n    const joined = parts.join(\" \");\n    if (!joined) return \"\";\n    return joined.length > max ? joined.slice(0, max).replace(/\\s+\\S*$/, \"\") + \"…\" : joined;\n}\n\nasync function readFile(path) {\n    try {\n        const file = app.vault.getAbstractFileByPath(path);\n        return file ? await app.vault.cachedRead(file) : null;\n    } catch (e) {\n        return null;\n    }\n}\n\nasync function readNote(note) {\n    if (parsedCache.has(note.path)) return parsedCache.get(note.path);\n    const raw = await readFile(note.path);\n    const parsed = raw === null ? null : parse(raw);\n    parsedCache.set(note.path, parsed);\n    return parsed;\n}\n\nasync function loadExcerpt(book) {\n    if (excerpts.has(book.path)) return excerpts.get(book.path);\n    const raw = cfg.showExcerpt ? await readFile(book.path) : null;\n    const text = raw === null ? \"\" : parseExcerpt(raw, cfg.excerptChars || 420);\n    excerpts.set(book.path, text);\n    return text;\n}\n\n// ---------- случайный выбор ----------\nconst shuffle = (arr) => {\n    for (let i = arr.length - 1; i > 0; i--) {\n        const j = Math.floor(Math.random() * (i + 1));\n        [arr[i], arr[j]] = [arr[j], arr[i]];\n    }\n    return arr;\n};\n\n// Выбрать случайную заметку; fresh — выбрать другую, чем сейчас\nasync function pick(book, fresh) {\n    if (!book.noteList.length) return null;\n    if (!fresh && picked.has(book.path)) return picked.get(book.path);\n\n    const current = picked.get(book.path);\n    const pool = shuffle([...book.noteList]);\n    const order = fresh && current ? [...pool.filter((n) => n.path !== current.note.path), ...pool.filter((n) => n.path === current.note.path)] : pool;\n\n    for (const note of order.slice(0, 10)) {\n        const parsed = await readNote(note);\n        if (parsed && parsed.quote) {\n            const result = { note, quote: parsed.quote, comment: parsed.comment };\n            picked.set(book.path, result);\n            return result;\n        }\n    }\n    return null;\n}\n\n// Лучший из доступных сейчас текстов книги (без ожидания) или null\nfunction content(book) {\n    const r = picked.get(book.path);\n    if (r) return { quote: r.quote, comment: r.comment, path: r.note.path, name: r.note.name, source: \"note\" };\n    if (book.quote) return { quote: book.quote, comment: \"\", path: book.path, name: book.title, source: \"property\" };\n    const ex = excerpts.get(book.path);\n    if (ex) return { quote: ex, comment: \"\", path: book.path, name: book.title, source: \"excerpt\" };\n    return null;\n}\n\n// Сколько текста у книги: от этого зависит, можно ли дать ей большую карточку\nconst textLength = (book) => {\n    const c = content(book);\n    return c ? c.quote.length + (c.comment || \"\").length : 0;\n};\n\n// Прочитать всё нужное для одной книги\nasync function ensure(book) {\n    if (book.noteList.length && !picked.has(book.path)) await pick(book, false);\n    if (!content(book)) await loadExcerpt(book);\n}\n\n// Заранее прочитать тексты всех книг (до 8 файлов одновременно), но не дольше budgetMs\nasync function preload(books, budgetMs) {\n    const work = books.filter((b) => b.noteList.length || (!b.quote && cfg.showExcerpt));\n    let next = 0;\n    const worker = async () => {\n        while (next < work.length) {\n            const book = work[next++];\n            try {\n                await ensure(book);\n            } catch (e) {\n                /* пропускаем книгу */\n            }\n        }\n    };\n    const all = Promise.all(Array.from({ length: Math.min(8, work.length) }, worker));\n    await Promise.race([all, new Promise((resolve) => setTimeout(resolve, budgetMs || 2500))]);\n}\n\n// Дочитать недостающие тексты для уже отрисованных элементов с data-book и вызвать fill(элемент, текст)\nasync function hydrate(root, fill) {\n    const nodes = [...root.querySelectorAll(\"[data-book]\")];\n    await Promise.all(\n        nodes.map(async (el) => {\n            const book = booksByPath.get(el.dataset.book);\n            if (!book) return;\n            await ensure(book);\n            const c = content(book);\n            if (c && root.contains(el)) fill(el, c);\n        })\n    );\n}\n\nasync function reroll(bookPath) {\n    const book = booksByPath.get(bookPath);\n    return book ? pick(book, true) : null;\n}\n\nmodule.exports = { buildIndex, parse, parseExcerpt, content, textLength, pick, preload, hydrate, reroll };\n","settings":"// src/settings.js — вкладка настроек плагина. Значения — «по умолчанию» для всех галерей;\n// параметры в самом блоке ```book-gallery их переопределяют.\n\nconst { PluginSettingTab, Setting, AbstractInputSuggest } = ctx.obsidian;\nconst plugin = ctx.plugin;\n\n// ---------- подсказки в полях ввода ----------\n// Папки хранилища (без служебных и скрытых), от корня; пустой вариант — всё хранилище\nfunction allFolders(app) {\n    const list = typeof app.vault.getAllFolders === \"function\"\n        ? app.vault.getAllFolders()\n        : app.vault.getAllLoadedFiles().filter((f) => f && f.children !== undefined);\n    return list\n        .map((f) => f.path)\n        .filter((p) => p && p !== \"/\" && !p.split(\"/\").some((part) => part.startsWith(\".\")))\n        .sort((a, b) => a.localeCompare(b, \"ru\"));\n}\n\n// Имена свойств, которые есть в заметках хранилища\nfunction allProperties(app) {\n    try {\n        const info = app.metadataCache.getAllPropertyInfos ? app.metadataCache.getAllPropertyInfos() : {};\n        const names = Object.values(info).map((i) => i.name).filter(Boolean);\n        return [...new Set(names)].sort((a, b) => a.localeCompare(b, \"ru\"));\n    } catch (e) {\n        return [];\n    }\n}\n\n// Выпадающий список подсказок под полем (если Obsidian старый и AbstractInputSuggest нет — просто текстовое поле)\nconst Suggest = AbstractInputSuggest\n    ? class extends AbstractInputSuggest {\n          constructor(app, inputEl, getItems, showAllOnExact) {\n              super(app, inputEl);\n              this.inputEl = inputEl;\n              this.getItems = getItems;\n              this.showAllOnExact = !!showAllOnExact;\n          }\n          getSuggestions(query) {\n              const q = String(query || \"\").trim().toLowerCase();\n              const items = this.getItems();\n              // поле уже заполнено папкой — показываем весь список, чтобы можно было выбрать другую\n              if (!q || (this.showAllOnExact && items.some((x) => x.toLowerCase() === q))) return items.slice(0, 200);\n              return items.filter((x) => x.toLowerCase().includes(q)).slice(0, 50);\n          }\n          renderSuggestion(value, el) {\n              el.setText(value);\n          }\n          selectSuggestion(value) {\n              this.inputEl.value = value;\n              this.inputEl.dispatchEvent(new Event(\"input\", { bubbles: true }));\n              this.close();\n          }\n      }\n    : null;\n\nconst FOLDER_KEYS = new Set([\"folder\", \"notesFolder\"]);\nconst PROPERTY_KEYS = new Set([\"filterField\", \"sourceField\"]);\n\nconst SORT_OPTIONS = {\n    date_desc: \"Сначала новые\",\n    date_asc: \"Сначала старые\",\n    rating_desc: \"Оценка: по убыванию\",\n    rating_asc: \"Оценка: по возрастанию\",\n    title_asc: \"Название (А-Я)\",\n    title_desc: \"Название (Я-А)\",\n};\n\nconst FIELD_LABELS = {\n    title: \"Название\",\n    author: \"Автор\",\n    genre: \"Жанр\",\n    rating: \"Оценка\",\n    date: \"Дата прочтения\",\n    cover: \"Обложка\",\n    quote: \"Цитата\",\n    notes: \"Заметки\",\n    label: \"Метка\",\n    time: \"Время чтения\",\n    pages: \"Страницы\",\n};\n\n// Набор секций: [заголовок, [[ключ, тип, название, описание, варианты]]]\nconst SECTIONS = [\n    [\"Данные\", [\n        [\"folder\", \"text\", \"Папка с книгами\", \"Заметки из этой папки (и подпапок) попадают в каталог. Начните вводить — появятся папки хранилища; пусто — всё хранилище.\"],\n        [\"filterField\", \"text\", \"Свойство-флаг\", \"Показывать только заметки, где это свойство равно значению ниже. Пусто — не фильтровать.\"],\n        [\"filterValue\", \"text\", \"Значение флага\", \"true / false или любой текст.\"],\n        [\"ratingMax\", \"text\", \"Шкала оценки\", \"Максимум в свойстве оценки (в интерфейсе всегда 5 звёзд).\"],\n        [\"dateFormat\", \"text\", \"Формат даты\", \"yyyy yy MMMM MMM MM M dd d EEEE EEE. По умолчанию dd MMMM yyyy.\"],\n        [\"dateLocale\", \"text\", \"Язык дат\", \"ru, en, de …\"],\n        [\"sourceField\", \"text\", \"Свойство «Источник»\", \"В заметке-цитате указывает на книгу.\"],\n        [\"notesFolder\", \"text\", \"Папка заметок-цитат\", \"Где искать заметки со свойством «Источник». Начните вводить — появятся папки хранилища; пусто — всё хранилище.\"],\n    ]],\n    [\"План на год\", [\n        [\"yearGoal\", \"text\", \"Книг за год\", \"Цель на год для инфографики: прогресс, прогноз, пунктир плана в «Пульсе». 0 — не задана.\"],\n        [\"yearGoalPages\", \"text\", \"Страниц за год\", \"Необязательно. 0 — не задана.\"],\n        [\"showProgress\", \"toggle\", \"Инфокарточки о прогрессе\"],\n    ]],\n    [\"Оформление\", [\n        [\"title\", \"text\", \"Заголовок\", \"Пусто — не показывать.\"],\n        [\"showStats\", \"toggle\", \"Блок «месяц + инсайт»\"],\n        [\"showPulse\", \"toggle\", \"Виджет «Пульс года»\"],\n        [\"tagsCollapsed\", \"toggle\", \"Панель тегов свёрнута\"],\n        [\"featured\", \"toggle\", \"Главная карточка для лучшей книги\"],\n        [\"wideShare\", \"text\", \"Доля широких карточек\", \"От 0 до 1: сколько карточек занимают две колонки (кроме «Книги года»). 0 — без широких.\"],\n        [\"bigShare\", \"text\", \"Доля больших карточек\", \"От 0 до 1.\"],\n        [\"bigMinChars\", \"text\", \"Минимум текста для большой карточки\", \"Символов.\"],\n        [\"coverFromBody\", \"toggle\", \"Обложка из текста заметки\", \"Если файла из свойства обложки нет — взять первую картинку из заметки.\"],\n        [\"showExcerpt\", \"toggle\", \"Отрывок из заметки книги\", \"Если нет цитат и заметок.\"],\n        [\"showFooter\", \"toggle\", \"Строка внизу\"],\n        [\"addButton\", \"toggle\", \"Кнопка «Добавить книгу»\"],\n        [\"fullWidth\", \"toggle\", \"Растянуть заметку на всю ширину\", \"Только для блока в заметке.\"],\n    ]],\n    [\"Поведение\", [\n        [\"openInNewTab\", \"toggle\", \"Открывать заметки в новой вкладке\"],\n        [\"defaultView\", \"dropdown\", \"Вид по умолчанию\", \"\", { cards: \"Карточки\", list: \"Список\" }],\n        [\"defaultSort\", \"dropdown\", \"Сортировка по умолчанию\", \"\", SORT_OPTIONS],\n        [\"coverFit\", \"dropdown\", \"Обложки в карточках\", \"\", { cover: \"Заполнить (обрезать по краям)\", contain: \"Показать целиком\" }],\n        [\"tagMode\", \"dropdown\", \"Режим тегов\", \"\", { any: \"Любой из выбранных\", all: \"Все выбранные\" }],\n    ]],\n];\n\nconst parseFlag = (v) => {\n    const s = String(v).trim();\n    if (s === \"true\") return true;\n    if (s === \"false\") return false;\n    return s;\n};\n\nclass BookGallerySettingTab extends PluginSettingTab {\n    constructor(app, plugin) {\n        super(app, plugin);\n        this.plugin = plugin;\n    }\n\n    display() {\n        const { containerEl } = this;\n        const S = this.plugin.settings;\n        const D = this.plugin.defaults;\n        containerEl.empty();\n\n        const save = () => this.plugin.saveSettings();\n\n        for (const [heading, rows] of SECTIONS) {\n            new Setting(containerEl).setName(heading).setHeading();\n            for (const [key, type, name, desc, options] of rows) {\n                const row = new Setting(containerEl).setName(name);\n                if (desc) row.setDesc(desc);\n                const cur = S[key] !== undefined ? S[key] : D[key];\n                if (type === \"toggle\") {\n                    row.addToggle((t) => t.setValue(!!cur).onChange((v) => { S[key] = v; save(); }));\n                } else if (type === \"dropdown\") {\n                    row.addDropdown((d) => d.addOptions(options).setValue(String(cur)).onChange((v) => { S[key] = v; save(); }));\n                } else {\n                    row.addText((t) => {\n                        const isFolder = FOLDER_KEYS.has(key);\n                        t.setValue(cur === null || cur === undefined ? \"\" : String(cur)).onChange((v) => {\n                            const text = isFolder ? v.trim().replace(/^\\/+|\\/+$/g, \"\") : v;\n                            S[key] = key === \"filterValue\" ? parseFlag(v) : key === \"notesFolder\" ? text || null : text;\n                            if (key === \"yearGoal\" || key === \"yearGoalPages\") S[key] = Math.max(0, parseInt(String(v).replace(/\\D/g, \"\"), 10) || 0);\n                            save();\n                        });\n                        if (isFolder && t.setPlaceholder) t.setPlaceholder(\"Всё хранилище\");\n                        if (Suggest && t.inputEl && isFolder) new Suggest(this.app, t.inputEl, () => allFolders(this.app), true);\n                        if (Suggest && t.inputEl && PROPERTY_KEYS.has(key)) new Suggest(this.app, t.inputEl, () => allProperties(this.app));\n                    });\n                }\n            }\n        }\n\n        new Setting(containerEl).setName(\"Имена свойств\").setDesc(\"Какие свойства заметки соответствуют полям книги.\").setHeading();\n        S.fields = S.fields || {};\n        for (const key of Object.keys(D.fields)) {\n            new Setting(containerEl).setName(FIELD_LABELS[key] || key).addText((t) => {\n                t.setValue(S.fields[key] !== undefined ? S.fields[key] : D.fields[key]).onChange((v) => {\n                    S.fields[key] = v.trim() || D.fields[key];\n                    save();\n                });\n                if (Suggest && t.inputEl) new Suggest(this.app, t.inputEl, () => allProperties(this.app));\n            });\n        }\n\n        new Setting(containerEl).setName(\"Сбросить настройки\").addButton((b) =>\n            b.setButtonText(\"Сбросить\").setWarning().onClick(async () => {\n                this.plugin.settings = {};\n                await this.plugin.saveSettings();\n                this.display();\n            })\n        );\n    }\n}\n\nmodule.exports = { BookGallerySettingTab };\n","stats":"// lib/stats.js — статистика последнего месяца и «инсайт месяца» (цитата). Без DOM.\n\nconst { plural } = ctx.lib.utils;\n\nconst MONTH_NAMES = [\"январь\", \"февраль\", \"март\", \"апрель\", \"май\", \"июнь\", \"июль\", \"август\", \"сентябрь\", \"октябрь\", \"ноябрь\", \"декабрь\"];\n\nconst sameMonth = (ms, y, m) => {\n    const d = new Date(ms);\n    return d.getFullYear() === y && d.getMonth() === m;\n};\n\n// Возвращает null, если ни у одной книги нет даты\nfunction compute(books) {\n    const dated = books.filter((b) => b.dateMs);\n    if (!dated.length) return null;\n\n    const latest = new Date(Math.max(...dated.map((b) => b.dateMs)));\n    const y = latest.getFullYear();\n    const m = latest.getMonth();\n    const prev = new Date(y, m - 1, 1);\n\n    const cur = dated.filter((b) => sameMonth(b.dateMs, y, m));\n    const prevCount = dated.filter((b) => sameMonth(b.dateMs, prev.getFullYear(), prev.getMonth())).length;\n\n    // рекорд года: в этом месяце прочитано больше, чем в любом другом месяце того же года\n    const perMonth = Array(12).fill(0);\n    dated.filter((b) => new Date(b.dateMs).getFullYear() === y).forEach((b) => perMonth[new Date(b.dateMs).getMonth()]++);\n    const bestOther = Math.max(0, ...perMonth.filter((_, i) => i !== m));\n    const isRecord = cur.length > bestOther && bestOther > 0;\n\n    // нарастающий итог по дням месяца (для мини-графика)\n    const lastDay = latest.getDate();\n    const perDay = Array(lastDay).fill(0);\n    cur.forEach((b) => perDay[new Date(b.dateMs).getDate() - 1]++);\n    let acc = 0;\n    const series = perDay.map((n) => (acc += n));\n\n    const now = new Date();\n    const inCurrentMonth = now.getFullYear() === y && now.getMonth() === m;\n    const daysElapsed = inCurrentMonth ? now.getDate() : new Date(y, m + 1, 0).getDate();\n    const pages = cur.reduce((s, b) => s + (b.pages || 0), 0);\n\n    return {\n        monthLabel: `${MONTH_NAMES[m]} ${y}`,\n        count: cur.length,\n        unit: plural(cur.length, [\"книга\", \"книги\", \"книг\"]),\n        record: isRecord ? { diff: cur.length - bestOther } : null,\n        pace: prevCount > 0 ? { pct: Math.round(((cur.length - prevCount) / prevCount) * 100), vs: MONTH_NAMES[prev.getMonth()] } : null,\n        pages: pages || null,\n        pagesPerDay: pages ? Math.round(pages / Math.max(1, daysElapsed)) : null,\n        activeDays: new Set(cur.map((b) => new Date(b.dateMs).getDate())).size,\n        series,\n        month: cur,\n    };\n}\n\n// Годы, в которые есть прочитанные книги (по убыванию)\nconst years = (books) =>\n    [...new Set(books.filter((b) => b.dateMs).map((b) => new Date(b.dateMs).getFullYear()))].sort((a, b) => b - a);\n\n// «Пульс» года: книги, страницы и средняя оценка по месяцам\nfunction pulse(books, year) {\n    const months = Array.from({ length: 12 }, (_, m) => ({ m, count: 0, pages: 0, scoreSum: 0, scored: 0 }));\n    books\n        .filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year)\n        .forEach((b) => {\n            const mm = months[new Date(b.dateMs).getMonth()];\n            mm.count++;\n            mm.pages += b.pages || 0;\n            if (b.score5 !== null) {\n                mm.scoreSum += b.score5;\n                mm.scored++;\n            }\n        });\n    const total = months.reduce((s, x) => s + x.count, 0);\n    const scored = months.reduce((s, x) => s + x.scored, 0);\n    const max = Math.max(0, ...months.map((x) => x.count));\n    return {\n        year,\n        months,\n        total,\n        max,\n        pages: months.reduce((s, x) => s + x.pages, 0) || null,\n        avg: scored ? months.reduce((s, x) => s + x.scoreSum, 0) / scored : null,\n        bestMonth: max ? months.find((x) => x.count === max).m : null,\n        years: years(books),\n    };\n}\n\n// План на год для выбранного года: свой (yearGoals) или общий (yearGoal)\nfunction goalFor(year, cfg) {\n    const own = cfg.yearGoals && Number(cfg.yearGoals[year]);\n    return own > 0 ? own : Number(cfg.yearGoal) > 0 ? Number(cfg.yearGoal) : 0;\n}\n\nconst topOf = (books, pick) => {\n    const counts = new Map();\n    books.forEach((b) => pick(b).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1)));\n    const sorted = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], \"ru\"));\n    return sorted.length ? { name: sorted[0][0], count: sorted[0][1] } : null;\n};\n\n// Показатели прогресса за год: план, темп, прогноз, серия месяцев, страницы, оценки, любимые жанр и автор\nfunction progress(books, year, opts) {\n    const o = opts || {};\n    const now = o.now || new Date();\n    const goal = o.goal > 0 ? o.goal : 0;\n    const goalPages = o.goalPages > 0 ? o.goalPages : 0;\n    const inYear = books.filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year);\n    const count = inYear.length;\n    const pages = inYear.reduce((s, b) => s + (b.pages || 0), 0);\n\n    // какая часть года прошла: 0 — год впереди, 1 — завершён\n    const start = new Date(year, 0, 1).getTime();\n    const end = new Date(year + 1, 0, 1).getTime();\n    const cy = now.getFullYear();\n    const frac = year < cy ? 1 : year > cy ? 0 : Math.min(1, Math.max(0, (now.getTime() - start) / (end - start)));\n    const finished = frac >= 1;\n\n    // серия месяцев с прочитанными книгами\n    const read = Array(12).fill(false);\n    inYear.forEach((b) => (read[new Date(b.dateMs).getMonth()] = true));\n    let longest = 0, run = 0;\n    read.forEach((v) => {\n        run = v ? run + 1 : 0;\n        longest = Math.max(longest, run);\n    });\n    let current = null;\n    if (year === cy) {\n        let m = now.getMonth();\n        if (!read[m]) m--; // текущий месяц ещё без книг — серия считается с прошлого\n        current = 0;\n        while (m >= 0 && read[m]) {\n            current++;\n            m--;\n        }\n    }\n\n    // план\n    const plan = goal\n        ? (() => {\n              const expected = goal * frac;\n              const ahead = count - expected;\n              const monthsLeft = 12 * (1 - frac);\n              const remaining = Math.max(0, goal - count);\n              return {\n                  goal,\n                  pct: Math.min(100, Math.round((count / goal) * 100)),\n                  remaining,\n                  done: count >= goal,\n                  // «по графику» — в пределах полкниги от равномерного темпа\n                  status: finished ? (count >= goal ? \"done\" : \"missed\") : ahead >= 0.5 ? \"ahead\" : ahead <= -0.5 ? \"behind\" : \"onTrack\",\n                  diff: Math.round(Math.abs(ahead)),\n                  need: !finished && remaining > 0 && monthsLeft > 0.05 ? remaining / monthsLeft : null,\n              };\n          })()\n        : null;\n\n    const perMonth = frac > 0.02 ? count / Math.max(frac * 12, 0.5) : null;\n    const forecast = frac > 0.02 && frac < 1 ? Math.round(count / frac) : null;\n\n    // страницы\n    const pagesPlan = goalPages\n        ? { goal: goalPages, pct: Math.min(100, Math.round((pages / goalPages) * 100)), perDay: null }\n        : null;\n    const daysElapsed = Math.max(1, Math.round(frac * (end - start) / 86400000));\n\n    // оценки по целым звёздам (как в фильтре)\n    const dist = { \"5\": 0, \"4\": 0, \"3\": 0, \"2\": 0, low: 0 };\n    let scored = 0, sum = 0;\n    inYear.forEach((b) => {\n        if (b.score5 === null) return;\n        scored++;\n        sum += b.score5;\n        const stars = Math.min(5, Math.floor(b.score5 + 1e-9));\n        dist[stars >= 2 ? String(stars) : \"low\"]++;\n    });\n\n    return {\n        year, count, finished, frac, plan, perMonth, forecast, read,\n        streak: { current, longest },\n        pages: pages || null,\n        pagesPerDay: pages ? Math.round(pages / daysElapsed) : null,\n        pagesPerBook: pages && inYear.filter((b) => b.pages).length ? Math.round(pages / inYear.filter((b) => b.pages).length) : null,\n        pagesPlan,\n        dist, scored, avg: scored ? sum / scored : null,\n        topGenre: topOf(inYear, (b) => b.genres),\n        topAuthor: topOf(inYear, (b) => b.authors),\n    };\n}\n\n// Книга для «инсайта месяца»: лучшая по оценке книга месяца, у которой есть заметки или цитата;\n// если таких нет — лучшая среди всех. Сам текст выбирает случайно lib/notes.js\nfunction insight(books, stats) {\n    const pick = (list) =>\n        list\n            .filter((b) => b.quote || b.noteList.length)\n            .sort((a, b) => (b.score5 ?? -1) - (a.score5 ?? -1) || b.dateMs - a.dateMs)[0];\n    const book = (stats && pick(stats.month)) || pick(books);\n    return book ? { book } : null;\n}\n\nmodule.exports = { compute, insight, pulse, years, progress, goalFor };\n","templates":"// lib/templates.js — HTML заголовка, блока статистики, «Пульса» года и панели фильтров.\n// Без логики событий: клики ловит ui.js по атрибутам data-action.\n\nconst { cfg } = ctx;\nconst { esc, fmtInt, plural, formatDate } = ctx.lib.utils;\nconst { icon } = ctx.lib.icons;\nconst { SORTS } = ctx.lib.data;\nconst Notes = ctx.lib.notes;\n\n// ---------- заголовок ----------\n// 3.2 -> «3,2», 3 -> «3»\nconst num1 = (n) => String(Math.round(n * 10) / 10).replace(\".\", \",\");\n\nfunction header(total) {\n    if (!cfg.title && !cfg.addButton) return \"\";\n    return `\n<header class=\"bg-header\">\n    <div class=\"bg-title\">${esc(cfg.title)}</div>\n    <div class=\"bg-header-actions\">\n        <span class=\"bg-count bg-mono\">${icon(\"book\")}Найдено: <b>${total}</b></span>\n        ${cfg.addButton ? `<button class=\"bg-btn bg-btn--primary\" type=\"button\" data-action=\"add\">${icon(\"plus\")}Добавить книгу</button>` : \"\"}\n    </div>\n</header>`;\n}\n\n// ---------- статистика месяца и инсайт ----------\n// Мини-график: нарастающий итог по дням месяца\nfunction sparkline(series) {\n    const W = 220, H = 60, pad = 4;\n    const pts = series.length > 1 ? series : [0, series[0] || 0];\n    const max = Math.max(1, ...pts);\n    const x = (i) => pad + (i * (W - pad * 2)) / (pts.length - 1);\n    const y = (v) => H - pad - (v / max) * (H - pad * 2 - 6);\n    const line = pts.map((v, i) => `${i ? \"L\" : \"M\"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(\" \");\n    const last = pts.length - 1;\n    const area = `${line} L${x(last).toFixed(1)} ${H} L${x(0).toFixed(1)} ${H} Z`;\n    return `\n<svg class=\"bg-spark\" viewBox=\"0 0 ${W} ${H}\" preserveAspectRatio=\"none\" aria-hidden=\"true\">\n    <defs><linearGradient id=\"bg-spark-fill\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\">\n        <stop offset=\"0\" stop-color=\"currentColor\" stop-opacity=\".35\"/><stop offset=\"1\" stop-color=\"currentColor\" stop-opacity=\"0\"/>\n    </linearGradient></defs>\n    <path d=\"${area}\" fill=\"url(#bg-spark-fill)\"/>\n    <path d=\"${line}\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linejoin=\"round\" stroke-linecap=\"round\" vector-effect=\"non-scaling-stroke\"/>\n</svg>`;\n}\n\nfunction stats(s, insight) {\n    if (!s) return \"\";\n\n    const record = s.record\n        ? `<span class=\"bg-badge bg-badge--soft bg-mono\">Рекорд года${s.record.diff > 0 ? ` +${s.record.diff}` : \"\"}</span>`\n        : \"\";\n    const side = [\n        s.pages ? `${fmtInt(s.pages)} стр` : \"\",\n        s.pagesPerDay ? `<span class=\"bg-accent\">${fmtInt(s.pagesPerDay)} стр/день</span>` : \"\",\n    ].filter(Boolean).join(\" · \");\n    const pace = s.pace\n        ? `<span class=\"bg-pace bg-mono\">Темп чтения: <b class=\"${s.pace.pct >= 0 ? \"bg-accent\" : \"bg-down\"}\">${s.pace.pct >= 0 ? \"+\" : \"\"}${s.pace.pct}%</b> vs ${esc(s.pace.vs)}</span>`\n        : \"\";\n\n    const monthCard = `\n<div class=\"bg-stat\">\n    <div class=\"bg-stat-head\">\n        <span class=\"bg-eyebrow bg-mono\"><span class=\"bg-eyebrow-ico bg-eyebrow-ico--amber\">${icon(\"trend\")}</span>${esc(s.monthLabel)}</span>\n        ${record}\n    </div>\n    <div class=\"bg-stat-row\">\n        <div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${s.count}</span><span class=\"bg-stat-unit\">${esc(s.unit)}</span></div>\n        ${side ? `<div class=\"bg-stat-side bg-mono\">${side}</div>` : \"\"}\n    </div>\n    <div class=\"bg-stat-foot bg-mono\">\n        <span>${pace || \"Динамика месяца\"}</span>\n        <span class=\"bg-accent\">${s.activeDays} ${plural(s.activeDays, [\"день\", \"дня\", \"дней\"])} чтения</span>\n    </div>\n    ${sparkline(s.series)}\n</div>`;\n\n    let insightCard = \"\";\n    if (insight) {\n        const b = insight.book;\n        const c = Notes.content(b);\n        const text = c ? (c.source === \"excerpt\" ? c.quote : `«${c.quote.replace(/^[«\"“”\\s]+|[»\"“”\\s]+$/g, \"\")}»`) : \"\";\n        // подпись — книга и автор, а не название заметки; клик открывает книгу\n        const target = { path: b.path, name: b.authorText ? `${b.title} — ${b.authorText}` : b.title };\n        insightCard = `\n<div class=\"bg-stat bg-stat--insight\" data-book=\"${esc(b.path)}\" data-role=\"insight\">\n    <div class=\"bg-stat-head\">\n        <span class=\"bg-eyebrow bg-mono\"><span class=\"bg-eyebrow-ico\">${icon(\"quote\")}</span>Инсайт месяца</span>\n        <span class=\"bg-eyebrow-ico\">${icon(\"link\")}</span>\n    </div>\n    <div class=\"bg-insight-text\">${text ? esc(text) : \"…\"}</div>\n    <a class=\"bg-insight-link bg-mono\" href=\"#\" data-action=\"open\" data-path=\"${esc(target.path)}\">${icon(\"file\")}<span>${esc(target.name)}</span></a>\n</div>`;\n    }\n\n    return `<section class=\"bg-stats\">${monthCard}${insightCard}</section>`;\n}\n\n// ---------- «Пульс прочитанных за год» ----------\nconst monthShort = (year, m) => {\n    try {\n        return new Intl.DateTimeFormat(cfg.dateLocale || \"ru\", { month: \"long\" }).format(new Date(year, m, 1)).slice(0, 3);\n    } catch (e) {\n        return String(m + 1);\n    }\n};\n\nconst monthKey = (year, m) => `${year}-${String(m + 1).padStart(2, \"0\")}`;\n\n// data — результат Stats.pulse; selected — ключ выбранного месяца (\"2026-09\") или null\nfunction pulse(data, selected, goalPerMonth) {\n    if (!data || !data.years.length) return \"\";\n    // шкала столбцов; если задан план, пунктир плана тоже должен помещаться\n    const scale = Math.max(data.max, goalPerMonth ? Math.ceil(goalPerMonth) : 0, 1);\n\n    const idx = data.years.indexOf(data.year);\n    const older = data.years[idx + 1];\n    const newer = data.years[idx - 1];\n    const yearBtn = (icoName, target, label) =>\n        `<button class=\"bg-year-btn\" type=\"button\" data-action=\"pulse-year\" data-value=\"${target ?? \"\"}\" aria-label=\"${label}\"${target ? \"\" : \" disabled\"}>${icon(icoName)}</button>`;\n\n    const bars = data.months\n        .map((x) => {\n            const key = monthKey(data.year, x.m);\n            const h = x.count ? Math.max(8, Math.round((x.count / scale) * 100)) : 3;\n            const full = formatDate(new Date(data.year, x.m, 1).getTime(), \"MMMM yyyy\", cfg.dateLocale);\n            const hint = `${full}: ${x.count} ${plural(x.count, [\"книга\", \"книги\", \"книг\"])}${x.pages ? `, ${fmtInt(x.pages)} стр` : \"\"}`;\n            return `\n<button class=\"bg-bar${selected === key ? \" is-on\" : \"\"}${x.count ? \"\" : \" is-empty\"}${x.count === data.max && x.count ? \" is-peak\" : \"\"}\" type=\"button\" data-action=\"pulse-month\" data-value=\"${key}\" title=\"${esc(hint)}\">\n    <span class=\"bg-bar-val bg-mono\">${x.count || \"\"}</span>\n    <span class=\"bg-bar-track\"><span class=\"bg-bar-fill\" style=\"height:${h}%\"></span>${goalPerMonth ? `<span class=\"bg-bar-goal\" style=\"bottom:${Math.min(100, (goalPerMonth / scale) * 100)}%\"></span>` : \"\"}</span>\n    <span class=\"bg-bar-lbl bg-mono\">${esc(monthShort(data.year, x.m))}</span>\n</button>`;\n        })\n        .join(\"\");\n\n    const best = data.bestMonth !== null\n        ? `<div><div class=\"bg-meta-k bg-mono\">Лучший месяц</div><div class=\"bg-meta-v\">${esc(formatDate(new Date(data.year, data.bestMonth, 1).getTime(), \"MMMM\", cfg.dateLocale))} · ${data.max}</div></div>`\n        : \"\";\n    const sums = [\n        data.pages ? `<div><div class=\"bg-meta-k bg-mono\">Страниц</div><div class=\"bg-meta-v bg-mono\">${fmtInt(data.pages)}</div></div>` : \"\",\n        data.avg !== null ? `<div><div class=\"bg-meta-k bg-mono\">Средняя оценка</div><div class=\"bg-meta-v bg-mono\">${data.avg.toFixed(1)}${icon(\"star\", \"bg-ico--fill bg-star\")}</div></div>` : \"\",\n        best,\n    ].join(\"\");\n\n    return `\n<section class=\"bg-pulse\">\n    <div class=\"bg-pulse-head\">\n        <span class=\"bg-eyebrow bg-mono\"><span class=\"bg-eyebrow-ico\">${icon(\"pulse\")}</span>Пульс прочитанных за год</span>\n        <div class=\"bg-year bg-mono\">${yearBtn(\"chevron-left\", older, \"Предыдущий год\")}<span>${data.year}</span>${yearBtn(\"chevron-right\", newer, \"Следующий год\")}</div>\n    </div>\n    <div class=\"bg-pulse-body\">\n        <div class=\"bg-pulse-sum\">\n            <div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${data.total}</span><span class=\"bg-stat-unit\">${plural(data.total, [\"книга\", \"книги\", \"книг\"])}</span></div>\n            <div class=\"bg-meta\">${sums}</div>\n        </div>\n        <div class=\"bg-bars\" role=\"group\" aria-label=\"Книги по месяцам\">${bars}</div>\n    </div>\n    <div class=\"bg-pulse-hint bg-mono\">Нажмите на столбец, чтобы показать книги месяца${goalPerMonth ? ` · пунктир — план: ${num1(goalPerMonth)} ${plural(Math.round(goalPerMonth), [\"книга\", \"книги\", \"книг\"])} в месяц` : \"\"}</div>\n</section>`;\n}\n\n// ---------- панель фильтров ----------\nconst options = (values, allLabel) =>\n    [`<option value=\"all\">${esc(allLabel)}</option>`, ...values.map((v) => `<option value=\"${esc(v)}\">${esc(v)}</option>`)].join(\"\");\n\nconst select = (name, optionsHtml, icoName) =>\n    `<div class=\"bg-select\">${icoName ? icon(icoName, \"bg-select-ico\") : \"\"}<select data-filter=\"${name}\">${optionsHtml}</select>${icon(\"chevron-down\", \"bg-select-arrow\")}</div>`;\n\nfunction panel({ authors, genres, view, tagsOpen }) {\n    const sortOptions = Object.entries(SORTS)\n        .map(([id, s]) => `<option value=\"${id}\">Сортировка: ${esc(s.label)}</option>`)\n        .join(\"\");\n\n    return `\n<section class=\"bg-panel\">\n    <div class=\"bg-panel-head\">\n        <div class=\"bg-panel-title\">\n            <span class=\"bg-ico-box\">${icon(\"sliders\")}</span>\n            <div>\n                <div class=\"bg-panel-name\">Конфигуратор фильтров <span class=\"bg-pill bg-mono\" data-zone=\"badge\" hidden></span></div>\n                <div class=\"bg-panel-sub\">Быстрая калибровка витрины и поиск по тегам</div>\n            </div>\n        </div>\n        <div class=\"bg-panel-actions\">\n            <div class=\"bg-seg\" role=\"group\">\n                <button type=\"button\" class=\"bg-seg-btn${view === \"cards\" ? \" is-on\" : \"\"}\" data-action=\"view\" data-value=\"cards\">${icon(\"grid\")}<span>Карточки</span></button>\n                <button type=\"button\" class=\"bg-seg-btn${view === \"list\" ? \" is-on\" : \"\"}\" data-action=\"view\" data-value=\"list\">${icon(\"list\")}<span>Список</span></button>\n            </div>\n            <button type=\"button\" class=\"bg-ghost bg-mono\" data-action=\"reset\" title=\"Сбросить все\" aria-label=\"Сбросить все\">${icon(\"reset\")}<span>Сбросить все</span></button>\n        </div>\n    </div>\n\n    <div class=\"bg-panel-body\">\n        <div class=\"bg-row\">\n            <label class=\"bg-search\">${icon(\"search\")}<input class=\"bg-search-input\" type=\"text\" placeholder=\"Поиск по названию, автору или аннотации книги...\" data-filter=\"search\"></label>\n            ${select(\"sort\", sortOptions)}\n        </div>\n\n        <div class=\"bg-two\">\n            <div class=\"bg-field\">\n                <div class=\"bg-label bg-mono\">${icon(\"user\")}Автор заметки</div>\n                ${select(\"author\", options(authors, `Все авторы (${authors.length} в каталоге)`))}\n            </div>\n            <div class=\"bg-field\">\n                <div class=\"bg-label bg-mono\">${icon(\"shapes\")}Основной жанр</div>\n                ${select(\"genre\", options(genres, \"Все жанры\"))}\n            </div>\n        </div>\n\n        <div class=\"bg-field\">\n            <div class=\"bg-label-row\">\n                <div class=\"bg-label bg-mono\">${icon(\"star\")}Фильтр по оценке</div>\n                <span class=\"bg-hint bg-mono\">шкала 0–5</span>\n            </div>\n            <div class=\"bg-chips\" data-zone=\"scores\"></div>\n        </div>\n\n        <div class=\"bg-field bg-field--tags${tagsOpen ? \"\" : \" is-collapsed\"}\" data-zone=\"tagsfield\">\n            <div class=\"bg-label-row\">\n                <button type=\"button\" class=\"bg-label bg-label--btn bg-mono\" data-action=\"tags-toggle\" aria-expanded=\"${tagsOpen ? \"true\" : \"false\"}\">\n                    ${icon(\"chevron-up\", \"bg-fold\")}${icon(\"hash\")}Теги заметок <span class=\"bg-pill bg-mono\" data-zone=\"tagcount\"></span>\n                </button>\n                <span class=\"bg-hint bg-mono\">Кликните для включения в фильтр</span>\n            </div>\n            <div class=\"bg-tags-body\">\n                <div class=\"bg-chips\" data-zone=\"tags\"></div>\n                <input class=\"bg-tag-find bg-mono\" type=\"text\" placeholder=\"+ Найти тег...\" data-filter=\"tagQuery\">\n            </div>\n        </div>\n    </div>\n\n    <div class=\"bg-panel-foot bg-mono\" data-zone=\"applied\"></div>\n</section>`;\n}\n\n// ---------- динамические зоны панели ----------\nfunction tagChips(allTags, selected, query) {\n    const q = query.trim().toLowerCase();\n    const shown = allTags.filter((t) => selected.has(t) || !q || t.toLowerCase().includes(q));\n    if (!shown.length) return `<span class=\"bg-hint bg-mono\">Нет таких тегов</span>`;\n    return shown\n        .map((t) => `<button type=\"button\" class=\"bg-chip bg-mono${selected.has(t) ? \" is-on\" : \"\"}\" data-action=\"tag\" data-tag=\"${esc(t)}\">${esc(t)}</button>`)\n        .join(\"\");\n}\n\nfunction scoreChips(counts, active) {\n    const star = icon(\"star\", \"bg-ico--fill bg-star\");\n    const items = [\n        [\"all\", `Все (${counts.all})`],\n        [\"5\", `5 ${star}`],\n        [\"4\", `4 ${star}`],\n        [\"3\", `3 ${star}`],\n        [\"2\", `2 ${star}`],\n        [\"low\", `${icon(\"thumbs-down\")}Менее 2`],\n    ];\n    return items\n        .map(([id, label]) => `<button type=\"button\" class=\"bg-chip bg-chip--score bg-mono${id === \"low\" ? \" bg-chip--danger\" : \"\"}${active === id ? \" is-on\" : \"\"}\" data-action=\"score\" data-value=\"${id}\">${label}</button>`)\n        .join(\"\");\n}\n\nconst SCORE_LABELS = { \"5\": \"5 ★\", \"4\": \"4 ★\", \"3\": \"3 ★\", \"2\": \"2 ★\", low: \"менее 2 ★\" };\n\nfunction applied(st, list, total) {\n    const chips = [];\n    if (st.search.trim()) chips.push(`${icon(\"search\")}«${esc(st.search.trim())}»`);\n    if (st.month) {\n        const [y, m] = st.month.split(\"-\").map(Number);\n        chips.push(`${icon(\"pulse\")}${esc(formatDate(new Date(y, m - 1, 1).getTime(), \"MMMM yyyy\", cfg.dateLocale))}`);\n    }\n    if (st.tags.size) chips.push(`${icon(\"hash\")}${esc([...st.tags].map((t) => t.replace(/^#/, \"\")).join(\", \"))}`);\n    if (st.author !== \"all\") chips.push(`${icon(\"user\")}${esc(st.author)}`);\n    if (st.genre !== \"all\") chips.push(`${icon(\"shapes\")}${esc(st.genre)}`);\n    if (st.score !== \"all\") chips.push(`${icon(\"star\")}${SCORE_LABELS[st.score]}`);\n    if (!chips.length) chips.push(`${icon(\"shapes\")}Без фильтров`);\n\n    const last = list.reduce((m, b) => (b.dateMs > m.dateMs ? b : m), { dateMs: 0, dateText: \"\" });\n    return `\n<div class=\"bg-foot-left\"><span>Применены:</span>${chips.map((c) => `<span class=\"bg-applied\">${c}</span>`).join(\"\")}</div>\n<div class=\"bg-foot-right\"><span>Совпадений: <b class=\"bg-accent\">${list.length}</b> из ${total} заметок</span>${last.dateMs ? `<span class=\"bg-last\" title=\"Последнее добавление\">${icon(\"file\")}${esc(last.dateText)}</span>` : \"\"}</div>`;\n}\n\n// ---------- инфокарточки о прогрессе ----------\nconst RING = 2 * Math.PI * 42;\nconst ring = (pct) =>\n    `<svg class=\"bg-ring\" viewBox=\"0 0 100 100\" aria-hidden=\"true\"><circle class=\"bg-ring-bg\" cx=\"50\" cy=\"50\" r=\"42\"/><circle class=\"bg-ring-fg\" cx=\"50\" cy=\"50\" r=\"42\" stroke-dasharray=\"${((RING * pct) / 100).toFixed(1)} ${RING.toFixed(1)}\" transform=\"rotate(-90 50 50)\"/></svg>`;\n\nconst bar = (pct) => `<span class=\"bg-progress-bar\"><span style=\"width:${pct}%\"></span></span>`;\n\nconst pcard = (cls, ico, title, body, foot) => `\n<div class=\"bg-stat bg-pcard ${cls}\">\n    <div class=\"bg-stat-head\"><span class=\"bg-eyebrow bg-mono\"><span class=\"bg-eyebrow-ico\">${icon(ico)}</span>${esc(title)}</span></div>\n    ${body}\n    ${foot ? `<div class=\"bg-stat-foot bg-mono\">${foot}</div>` : \"\"}\n</div>`;\n\nconst STATUS = {\n    ahead: (p) => `<b class=\"bg-accent\">Опережаете на ${p.diff}</b>`,\n    behind: (p) => `<b class=\"bg-down\">Отстаёте на ${p.diff}</b>`,\n    onTrack: () => `<b class=\"bg-accent\">По графику</b>`,\n    done: () => `<b class=\"bg-accent\">План выполнен</b>`,\n    missed: (p) => `<b class=\"bg-down\">Не хватило ${p.remaining}</b>`,\n};\n\nfunction progress(P) {\n    if (!P) return \"\";\n    const books = [\"книга\", \"книги\", \"книг\"];\n    const cards = [];\n\n    // 1. план на год\n    if (P.plan) {\n        const p = P.plan;\n        cards.push(\n            pcard(\n                \"bg-pcard--plan\",\n                \"badge\",\n                `План на ${P.year}`,\n                `<div class=\"bg-plan\"><div class=\"bg-ring-wrap\">${ring(p.pct)}<span class=\"bg-ring-num bg-mono\">${p.pct}%</span></div>\n                <div class=\"bg-plan-text\"><div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${P.count}</span><span class=\"bg-stat-unit\">из ${p.goal}</span></div>\n                <div class=\"bg-plan-status bg-mono\">${STATUS[p.status](p)}</div></div></div>`,\n                p.done\n                    ? `<span>Сверх плана: ${P.count - p.goal}</span>`\n                    : `<span>Осталось ${p.remaining}</span><span class=\"bg-accent\">${p.need ? `нужно ${num1(p.need)} в месяц` : \"\"}</span>`\n            )\n        );\n    } else {\n        cards.push(\n            pcard(\n                \"bg-pcard--plan bg-pcard--hint\",\n                \"badge\",\n                \"План на год\",\n                `<div class=\"bg-pcard-hint\">Задайте цель на год в настройках плагина («План на год») или параметром <code>yearGoal</code> в блоке — здесь появятся прогресс и прогноз.</div>`,\n                \"\"\n            )\n        );\n    }\n\n    if (P.count) {\n        // 2. темп и прогноз\n        const unit = P.finished ? \"книги в месяц\" : \"к концу года\";\n        const big = P.finished ? num1(P.count / 12) : P.forecast !== null ? `≈ ${P.forecast}` : \"—\";\n        const verdict =\n            P.plan && P.forecast !== null && !P.finished\n                ? P.forecast >= P.plan.goal\n                    ? `<span class=\"bg-accent\">Успеете: прогноз выше плана</span>`\n                    : `<span class=\"bg-down\">Не успеете при таком темпе</span>`\n                : \"\";\n        cards.push(\n            pcard(\n                \"\",\n                \"trend\",\n                P.finished ? \"Темп года\" : \"Темп и прогноз\",\n                `<div class=\"bg-stat-row\"><div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${big}</span><span class=\"bg-stat-unit\">${unit}</span></div></div>`,\n                verdict || (P.perMonth ? `<span>Сейчас ${num1(P.perMonth)} ${plural(Math.round(P.perMonth), books)} в месяц</span>` : `<span>Мало данных для прогноза</span>`)\n            )\n        );\n\n        // 3. серия месяцев\n        const n = P.streak.current !== null ? P.streak.current : P.streak.longest;\n        const dots = P.read\n            .map((v, m) => `<i class=\"bg-dot-m${v ? \" is-on\" : \"\"}\" title=\"${esc(monthShort(P.year, m))}\"></i>`)\n            .join(\"\");\n        cards.push(\n            pcard(\n                \"\",\n                \"pulse\",\n                \"Серия чтения\",\n                `<div class=\"bg-stat-row\"><div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${n}</span><span class=\"bg-stat-unit\">${plural(n, [\"месяц\", \"месяца\", \"месяцев\"])} подряд</span></div></div>\n                <div class=\"bg-dots\">${dots}</div>`,\n                `<span>${P.streak.current !== null ? \"Текущая серия\" : \"Лучшая серия года\"}</span><span class=\"bg-accent\">рекорд года: ${P.streak.longest}</span>`\n            )\n        );\n\n        // 4. страницы\n        if (P.pages || P.pagesPlan) {\n            const pp = P.pagesPlan;\n            cards.push(\n                pcard(\n                    \"\",\n                    \"file\",\n                    \"Страницы\",\n                    `<div class=\"bg-stat-row\"><div class=\"bg-stat-main\"><span class=\"bg-stat-num\">${fmtInt(P.pages || 0)}</span><span class=\"bg-stat-unit\">стр${pp ? ` из ${fmtInt(pp.goal)}` : \"\"}</span></div></div>\n                    ${pp ? bar(pp.pct) : \"\"}`,\n                    `<span>${P.pagesPerDay ? `≈ ${fmtInt(P.pagesPerDay)} стр в день` : \"\"}</span><span class=\"bg-accent\">${P.pagesPerBook ? `${fmtInt(P.pagesPerBook)} стр на книгу` : \"\"}</span>`\n                )\n            );\n        }\n\n        // 5. оценки\n        if (P.scored) {\n            const maxN = Math.max(1, ...Object.values(P.dist));\n            const row = (id, label) =>\n                `<button type=\"button\" class=\"bg-dist-row\" data-action=\"score\" data-value=\"${id}\" title=\"Показать книги с оценкой ${esc(label)}\">\n                    <span class=\"bg-dist-k bg-mono\">${label}</span>${bar(Math.round((P.dist[id] / maxN) * 100))}<span class=\"bg-dist-n bg-mono\">${P.dist[id]}</span></button>`;\n            cards.push(\n                pcard(\n                    \"bg-pcard--dist\",\n                    \"star\",\n                    \"Оценки года\",\n                    `<div class=\"bg-dist\">${row(\"5\", \"5★\")}${row(\"4\", \"4★\")}${row(\"3\", \"3★\")}${row(\"2\", \"2★\")}${row(\"low\", \"<2★\")}</div>`,\n                    `<span>Средняя оценка</span><span class=\"bg-accent\">${P.avg.toFixed(1)} ${icon(\"star\", \"bg-ico--fill bg-star\")}</span>`\n                )\n            );\n        }\n\n        // 6. любимые жанр и автор\n        if (P.topGenre || P.topAuthor) {\n            const fav = (ico, label, top, field) =>\n                top\n                    ? `<button type=\"button\" class=\"bg-fav\" data-action=\"set-filter\" data-field=\"${field}\" data-value=\"${esc(top.name)}\" title=\"Показать книги: ${esc(top.name)}\">\n                        <span class=\"bg-fav-ico\">${icon(ico)}</span><span class=\"bg-fav-body\"><span class=\"bg-meta-k bg-mono\">${label}</span><span class=\"bg-fav-name\">${esc(top.name)}</span></span><span class=\"bg-fav-n bg-mono\">${top.count}</span></button>`\n                    : \"\";\n            cards.push(\n                pcard(\"bg-pcard--fav\", \"shapes\", \"Чаще всего\", `<div class=\"bg-favs\">${fav(\"shapes\", \"Жанр\", P.topGenre, \"genre\")}${fav(\"user\", \"Автор\", P.topAuthor, \"author\")}</div>`, \"\")\n            );\n        }\n    }\n\n    return `<section class=\"bg-progress\">${cards.join(\"\")}</section>`;\n}\n\nfunction footer(total, ms, cov) {\n    const loaded = `Book Gallery: загружено ${total} ${plural(total, [\"запись\", \"записи\", \"записей\"])} за ${Math.max(1, Math.round(ms))} мс`;\n    const lost = cov && cov.set > cov.found ? cov.set - cov.found : 0;\n    const warn = lost\n        ? ` · <span class=\"bg-accent\" title=\"${esc(\"Не найдены файлы обложек. Примеры: \" + cov.missing.join(\"; \"))}\">обложек не найдено: ${lost}</span>`\n        : \"\";\n    return `<div class=\"bg-footer bg-mono\">${icon(\"database\")}${loaded}${warn}</div>`;\n}\n\nmodule.exports = { header, stats, pulse, progress, panel, tagChips, scoreChips, applied, footer, monthKey };\n","thumbs":"// lib/thumbs.js — уменьшенные копии обложек.\n//\n// Обложки в хранилище бывают огромными (тысячи пикселей). Если выводить их как есть, браузер держит в\n// памяти полноразмерные кадры для каждой карточки, а при наведении и прокрутке перекодирует их заново:\n// это даёт мерцание и тормоза. Здесь каждая обложка один раз уменьшается до MAX_SIDE пикселей\n// и дальше показывается копия. Кэш общий для всех перерисовок. Если что-то не вышло, берётся оригинал.\n\nconst MAX_SIDE = 560;\nconst LIMIT = 3;            // сколько обложек обрабатывается одновременно\nconst TIMEOUT = 6000;       // мс на одну обложку: если не успели, показываем оригинал и освобождаем очередь\nconst MAX_FAILS = 3;        // столько сбоев подряд — и уменьшение отключается (показываем оригиналы)\n\n// кэш живёт в window, чтобы переживать перерисовку блока\nconst store = (window.__bookGalleryThumbs = window.__bookGalleryThumbs || { done: new Map(), pending: new Map(), fails: 0 });\n\nlet running = 0;\nconst waiting = [];\nfunction schedule(task) {\n    return new Promise((resolve, reject) => {\n        const run = () => {\n            running++;\n            task()\n                .then(resolve, reject)\n                .finally(() => {\n                    running--;\n                    const next = waiting.shift();\n                    if (next) next();\n                });\n        };\n        running < LIMIT ? run() : waiting.push(run);\n    });\n}\n\n// Уменьшенная копия или исходный url; никогда не висит дольше TIMEOUT\nasync function build(url) {\n    if (/^data:/i.test(url) || typeof createImageBitmap !== \"function\") return url;\n    const ctl = typeof AbortController === \"function\" ? new AbortController() : null;\n    let timer;\n    const timeout = new Promise((_, reject) => {\n        timer = setTimeout(() => {\n            if (ctl) ctl.abort();\n            reject(new Error(\"timeout\"));\n        }, TIMEOUT);\n    });\n    const work = (async () => {\n        const res = await fetch(url, ctl ? { signal: ctl.signal } : undefined);\n        if (!res.ok) throw new Error(\"http \" + res.status);\n        const bmp = await createImageBitmap(await res.blob());\n        try {\n            const k = Math.min(1, MAX_SIDE / Math.max(bmp.width, bmp.height));\n            if (k >= 1) return url; // уже небольшая\n            const canvas = document.createElement(\"canvas\");\n            canvas.width = Math.max(1, Math.round(bmp.width * k));\n            canvas.height = Math.max(1, Math.round(bmp.height * k));\n            const g = canvas.getContext(\"2d\");\n            g.imageSmoothingQuality = \"high\";\n            g.drawImage(bmp, 0, 0, canvas.width, canvas.height);\n            const blob = await new Promise((resolve) => canvas.toBlob(resolve, \"image/webp\", 0.86));\n            return blob ? URL.createObjectURL(blob) : url;\n        } finally {\n            if (bmp.close) bmp.close();\n        }\n    })();\n    work.catch(() => {}); // если победил таймаут, ошибка поздней работы не должна считаться необработанной\n    try {\n        const result = await Promise.race([work, timeout]);\n        store.fails = 0;\n        return result;\n    } finally {\n        clearTimeout(timer);\n    }\n}\n\n// Уже готовая копия или null (без ожидания)\nconst peek = (url) => (store.done.has(url) ? store.done.get(url) : null);\n\nfunction get(url) {\n    if (store.done.has(url)) return Promise.resolve(store.done.get(url));\n    if (!store.pending.has(url)) {\n        store.pending.set(\n            url,\n            (store.fails >= MAX_FAILS ? Promise.resolve(url) : schedule(() => build(url)))\n                .catch(() => {\n                    store.fails++;\n                    return url;\n                })\n                .then((result) => {\n                    store.done.set(url, result);\n                    store.pending.delete(url);\n                    return result;\n                })\n        );\n    }\n    return store.pending.get(url);\n}\n\n// <img>: если копия готова — сразу с src, иначе с data-src (подставит hydrate)\nfunction imgTag(url, cls) {\n    const esc = ctx.lib.utils.esc;\n    const ready = peek(url);\n    return ready\n        ? `<img class=\"${cls}\" src=\"${esc(ready)}\" decoding=\"async\" alt=\"\">`\n        : `<img class=\"${cls}\" data-src=\"${esc(url)}\" decoding=\"async\" alt=\"\">`;\n}\n\n// Подставить src для всех картинок с data-src внутри root.\n// Если уменьшенная копия не загрузилась как картинка, берём исходный файл\nfunction hydrate(root) {\n    root.querySelectorAll(\"img[data-src]\").forEach((img) => {\n        const url = img.dataset.src;\n        img.removeAttribute(\"data-src\");\n        img.addEventListener(\n            \"error\",\n            () => {\n                if (img.src !== url && !img.dataset.fallback) {\n                    img.dataset.fallback = \"1\";\n                    img.src = url;\n                }\n            },\n            { once: true }\n        );\n        get(url).then((src) => {\n            if (img.isConnected) img.src = src;\n        });\n    });\n}\n\nmodule.exports = { get, peek, imgTag, hydrate };\n","ui":"// src/ui.js — сборка интерфейса, состояние, события и обновление списка.\n\nconst { cfg, app } = ctx;\nconst U = ctx.lib.utils;\nconst { uniqueValues } = ctx.lib.data;\nconst Stats = ctx.lib.stats;\nconst Filters = ctx.lib.filters;\nconst T = ctx.lib.templates;\nconst Cards = ctx.lib.cards;\nconst List = ctx.lib.list;\nconst Notes = ctx.lib.notes;\nconst Thumbs = ctx.lib.thumbs;\n\nconst localDate = () => {\n    const d = new Date();\n    const p = (n) => String(n).padStart(2, \"0\");\n    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;\n};\n\n// localStorage может быть недоступен (приватный режим, ограничения) — тогда просто не запоминаем выбор\nconst store = {\n    get: (k) => {\n        try { return localStorage.getItem(k); } catch (e) { return null; }\n    },\n    set: (k, v) => {\n        try { localStorage.setItem(k, v); } catch (e) { /* ничего страшного */ }\n    },\n};\n\nconst notify = (msg) => {\n    if (ctx.obsidian && ctx.obsidian.Notice) new ctx.obsidian.Notice(msg);\n    else console.warn(\"book-gallery:\", msg);\n};\n\n// Число колонок бенто-сетки по ширине блока: примерно по одной колонке на каждые ~300 px, от 2 до 8.\n// Для уже выбранного числа колонок (prev) действует запас в 48 px: когда из-за смены раскладки появляется\n// или исчезает полоса прокрутки, ширина меняется на ~15 px, и без запаса сетка бесконечно перестраивалась бы\nconst COL_STEPS = [0, 0, 0, 640, 900, 1200, 1500, 1800, 2100]; // COL_STEPS[n] — минимальная ширина для n колонок\nfunction colsFor(w, prev) {\n    if (!prev) {\n        let c = 2;\n        while (c < 8 && w >= COL_STEPS[c + 1]) c++;\n        return c;\n    }\n    const MARGIN = 48;\n    let c = prev;\n    while (c < 8 && w >= COL_STEPS[c + 1] + MARGIN) c++;\n    while (c > 2 && w < COL_STEPS[c] - MARGIN) c--;\n    return c;\n}\n\n// Создать пустую заметку о книге в cfg.folder и открыть её\nasync function addBook() {\n    const F = cfg.fields;\n    const folder = String(cfg.folder).replace(/\\/+$/, \"\");\n    try {\n        if (folder && !app.vault.getAbstractFileByPath(folder)) await app.vault.createFolder(folder);\n        let path;\n        let n = 0;\n        do {\n            n++;\n            path = `${folder ? folder + \"/\" : \"\"}Новая книга${n > 1 ? \" \" + n : \"\"}.md`;\n        } while (app.vault.getAbstractFileByPath(path));\n\n        const lines = [\n            \"---\",\n            `${F.title}: `,\n            `${F.author}: `,\n            `${F.genre}: `,\n            `${F.rating}: `,\n            `${F.date}: ${localDate()}`,\n            `${F.cover}: `,\n            cfg.filterField ? `${cfg.filterField}: ${cfg.filterValue}` : null,\n            \"---\",\n            \"\",\n        ].filter((l) => l !== null);\n        const file = await app.vault.create(path, lines.join(\"\\n\"));\n        await app.workspace.getLeaf(true).openFile(file);\n    } catch (e) {\n        console.error(\"book-gallery:\", e);\n        notify(\"Не удалось создать заметку: \" + (e && e.message ? e.message : e));\n    }\n}\n\nasync function mount(container, books, opts) {\n    const loadMs = (opts && opts.loadMs) || 0;\n    // keep — объект владельца блока: переживает перерисовку, чтобы фильтры и выбранный вид не сбрасывались\n    const keep = (opts && opts.keep) || {};\n\n    // блок могут перерисовать, пока предыдущий запуск ещё читает файлы\n    const token = {};\n    container.__bgToken = token;\n    // при тихом обновлении старая версия остаётся на экране, пока не готова новая (без мигания и скачка прокрутки)\n    if (!(opts && opts.silent)) container.innerHTML = '<div style=\"padding:24px;text-align:center;opacity:.6\">Загрузка…</div>';\n\n    const saved = store.get(cfg.storageKey);\n    let view = keep.view || (saved === \"list\" || saved === \"cards\" ? saved : cfg.defaultView === \"table\" ? \"list\" : cfg.defaultView);\n    if (view !== \"list\") view = \"cards\";\n\n    const tagsKey = cfg.storageKey + \"-tags\";\n    const savedTags = store.get(tagsKey);\n    let tagsOpen = typeof keep.tagsOpen === \"boolean\" ? keep.tagsOpen : savedTags === \"open\" ? true : savedTags === \"closed\" ? false : !cfg.tagsCollapsed;\n\n    // заметки книг нужны до статистики: от них зависят счётчики и «инсайт месяца»\n    Notes.buildIndex(books);\n    // тексты читаются заранее: по их объёму решается, какие книги получат большую карточку\n    await Notes.preload(books, 2500);\n    if (container.__bgToken !== token) return; // блок уже перезапущен\n    container.innerHTML = \"\";\n\n    const state = keep.state || Filters.createState();\n    const allTags = uniqueValues(books, \"tags\");\n    const stats = cfg.showStats ? Stats.compute(books) : null;\n    const insight = cfg.showStats ? Stats.insight(books, stats) : null;\n    const years = Stats.years(books);\n    let pulseYear = years.includes(keep.pulseYear) ? keep.pulseYear : years[0];\n    const sync = () => Object.assign(keep, { state, view, tagsOpen, pulseYear });\n\n    let timer; // задержка поиска\n\n    const root = U.el(\"div\", cfg.coverFit === \"contain\" ? \"bg-root bg-root--fit-contain\" : \"bg-root\");\n    root.innerHTML =\n        T.header(books.length) +\n        T.stats(stats, insight) +\n        `<div data-zone=\"pulse\"></div>` +\n        `<div data-zone=\"progress\"></div>` +\n        T.panel({ authors: uniqueValues(books, \"authors\"), genres: uniqueValues(books, \"genres\"), view, tagsOpen }) +\n        `<div class=\"bg-results\" data-zone=\"results\"></div>` +\n        (cfg.showFooter ? T.footer(books.length, loadMs, books.coverStats) : \"\");\n    container.appendChild(root);\n\n    const zone = (name) => root.querySelector(`[data-zone=\"${name}\"]`);\n    const zones = {\n        pulse: zone(\"pulse\"),\n        progress: zone(\"progress\"),\n        badge: zone(\"badge\"),\n        tagcount: zone(\"tagcount\"),\n        scores: zone(\"scores\"),\n        tags: zone(\"tags\"),\n        tagsfield: zone(\"tagsfield\"),\n        applied: zone(\"applied\"),\n        results: zone(\"results\"),\n    };\n    // восстановить значения полей (после перерисовки состояние уже может быть непустым)\n    const setField = (name, value) => {\n        const node = root.querySelector(`[data-filter=\"${name}\"]`);\n        if (node) node.value = value;\n    };\n    setField(\"search\", state.search);\n    setField(\"tagQuery\", state.tagQuery);\n    setField(\"author\", state.author);\n    setField(\"genre\", state.genre);\n    setField(\"sort\", state.sort);\n\n    let lastList = [];\n    let cols = 0;\n    let lastW = 0; // ширина блока при последней раскладке: по ней понимаем, что высоты карточек надо измерить заново\n\n    // ---------- отрисовка ----------\n    function renderPulse() {\n        const goal = years.length ? Stats.goalFor(pulseYear, cfg) : 0;\n        zones.pulse.innerHTML = cfg.showPulse && years.length ? T.pulse(Stats.pulse(books, pulseYear), state.month, goal ? goal / 12 : 0) : \"\";\n        // инфокарточки о прогрессе: за тот же год, что выбран в «Пульсе»; без книг показываем только план\n        zones.progress.innerHTML =\n            cfg.showProgress !== false && (years.length || cfg.yearGoal > 0)\n                ? T.progress(Stats.progress(books, pulseYear || new Date().getFullYear(), { goal, goalPages: Number(cfg.yearGoalPages) || 0 }))\n                : \"\";\n    }\n\n    function renderResults() {\n        cols = colsFor(zones.results.clientWidth || root.clientWidth || 1000, cols);\n        zones.results.innerHTML = view === \"cards\" ? Cards.grid(lastList, cols) : List.table(lastList, state.tags);\n        lastW = zones.results.clientWidth;\n        if (view === \"cards\") Cards.relayout(zones.results); // высоты карточек по факту\n        Thumbs.hydrate(zones.results);              // уменьшенные обложки\n        // тексты, которые не успели прочитаться заранее; после них высоты меняются — подгоняем сетку ещё раз\n        Notes.hydrate(zones.results, Cards.fill).then(() => {\n            if (view === \"cards\" && zones.results.isConnected) Cards.relayout(zones.results);\n        });\n    }\n\n    function update() {\n        sync();\n        lastList = Filters.apply(books, state);\n\n        const active = Filters.activeCount(state);\n        zones.badge.hidden = !active;\n        zones.badge.textContent = active ? `${active} ${U.plural(active, [\"активный\", \"активных\", \"активных\"])}` : \"\";\n        zones.tagcount.textContent = `${allTags.length} ${U.plural(allTags.length, [\"тег\", \"тега\", \"тегов\"])} · ${state.tags.size} выбрано`;\n        zones.tags.innerHTML = T.tagChips(allTags, state.tags, state.tagQuery);\n        zones.scores.innerHTML = T.scoreChips(Filters.scoreCounts(books), state.score);\n        zones.applied.innerHTML = T.applied(state, lastList, books.length);\n        root.querySelectorAll('[data-action=\"view\"]').forEach((b) => b.classList.toggle(\"is-on\", b.dataset.value === view));\n\n        renderPulse();\n        renderResults();\n    }\n\n    // Бенто-сетка пересчитывается, когда меняется число колонок (изменили ширину панели или окна)\n    const cleanups = [];\n    if (typeof ResizeObserver !== \"undefined\") {\n        let frame = 0;\n        const relayouts = []; // время последних перестроек: защита от бесконечного цикла\n        const observer = new ResizeObserver(() => {\n            cancelAnimationFrame(frame);\n            frame = requestAnimationFrame(() => {\n                if (!root.isConnected) return observer.disconnect();\n                const w = zones.results.clientWidth || root.clientWidth || 1000;\n                const next = colsFor(w, cols);\n                if (view !== \"cards\") return;\n                if (next === cols) {\n                    // число колонок то же, но ширина изменилась: тексты переносятся иначе, высоты надо измерить заново\n                    if (Math.abs(w - lastW) >= 1) {\n                        lastW = w;\n                        Cards.relayout(zones.results);\n                    }\n                    return;\n                }\n                const now = Date.now();\n                while (relayouts.length && now - relayouts[0] > 3000) relayouts.shift();\n                if (relayouts.length >= 6) return observer.disconnect(); // слишком часто — перестаём следить\n                relayouts.push(now);\n                renderResults();\n            });\n        });\n        observer.observe(root);\n        cleanups.push(() => {\n            cancelAnimationFrame(frame);\n            observer.disconnect();\n        });\n    }\n    cleanups.push(() => clearTimeout(timer));\n    // когда блок выгружается (переход на другую заметку, закрытие вкладки, перерисовка), всё останавливаем\n    if (opts && typeof opts.onCleanup === \"function\") opts.onCleanup(() => cleanups.forEach((fn) => fn()));\n\n    // ---------- события ----------\n    root.addEventListener(\"input\", (e) => {\n        const f = e.target.dataset && e.target.dataset.filter;\n        if (f === \"search\") {\n            clearTimeout(timer);\n            timer = setTimeout(() => {\n                state.search = e.target.value;\n                update();\n            }, cfg.searchDebounce);\n        } else if (f === \"tagQuery\") {\n            state.tagQuery = e.target.value;\n            zones.tags.innerHTML = T.tagChips(allTags, state.tags, state.tagQuery);\n        }\n    });\n\n    root.addEventListener(\"change\", (e) => {\n        const f = e.target.dataset && e.target.dataset.filter;\n        if (f === \"author\" || f === \"genre\" || f === \"sort\") {\n            state[f] = e.target.value;\n            update();\n        }\n    });\n\n    // Enter в поиске тегов: если остался один тег — включить его\n    root.addEventListener(\"keydown\", (e) => {\n        if (e.key !== \"Enter\" || !(e.target.dataset && e.target.dataset.filter === \"tagQuery\")) return;\n        const q = state.tagQuery.trim().toLowerCase();\n        const found = allTags.filter((t) => q && t.toLowerCase().includes(q));\n        if (found.length === 1) {\n            state.tags.has(found[0]) ? state.tags.delete(found[0]) : state.tags.add(found[0]);\n            e.target.value = \"\";\n            state.tagQuery = \"\";\n            update();\n        }\n    });\n\n    // Один обработчик кликов на весь блок (делегирование)\n    root.addEventListener(\"click\", (e) => {\n        const actionEl = e.target.closest(\"[data-action]\");\n        if (actionEl) {\n            const action = actionEl.dataset.action;\n\n            if (action === \"tag\") {\n                const tag = actionEl.dataset.tag;\n                state.tags.has(tag) ? state.tags.delete(tag) : state.tags.add(tag);\n                update();\n                return;\n            }\n            if (action === \"score\") {\n                state.score = state.score === actionEl.dataset.value ? \"all\" : actionEl.dataset.value;\n                update();\n                return;\n            }\n            if (action === \"view\") {\n                view = actionEl.dataset.value;\n                store.set(cfg.storageKey, view);\n                update();\n                return;\n            }\n            if (action === \"tags-toggle\") {\n                tagsOpen = !tagsOpen;\n                sync();\n                store.set(tagsKey, tagsOpen ? \"open\" : \"closed\");\n                zones.tagsfield.classList.toggle(\"is-collapsed\", !tagsOpen);\n                actionEl.setAttribute(\"aria-expanded\", tagsOpen ? \"true\" : \"false\");\n                return;\n            }\n            if (action === \"pulse-year\") {\n                if (actionEl.dataset.value) {\n                    pulseYear = Number(actionEl.dataset.value);\n                    sync();\n                    renderPulse();\n                }\n                return;\n            }\n            if (action === \"pulse-month\") {\n                // повторный клик по тому же месяцу снимает фильтр\n                state.month = state.month === actionEl.dataset.value ? null : actionEl.dataset.value;\n                const year = Number(state.month ? state.month.split(\"-\")[0] : pulseYear);\n                if (years.includes(year)) pulseYear = year;\n                update();\n                return;\n            }\n            if (action === \"reset\") {\n                Filters.reset(state);\n                root.querySelector('[data-filter=\"search\"]').value = \"\";\n                root.querySelector('[data-filter=\"tagQuery\"]').value = \"\";\n                root.querySelector('[data-filter=\"author\"]').value = \"all\";\n                root.querySelector('[data-filter=\"genre\"]').value = \"all\";\n                update();\n                return;\n            }\n            if (action === \"set-filter\") {\n                // клик по «любимому» жанру или автору включает соответствующий фильтр\n                const field = actionEl.dataset.field;\n                if (field === \"author\" || field === \"genre\") {\n                    state[field] = state[field] === actionEl.dataset.value ? \"all\" : actionEl.dataset.value;\n                    const select = root.querySelector(`[data-filter=\"${field}\"]`);\n                    if (select) select.value = state[field];\n                    update();\n                }\n                return;\n            }\n            if (action === \"reroll\") {\n                e.preventDefault();\n                e.stopPropagation();\n                actionEl.disabled = true;\n                Notes.reroll(actionEl.dataset.path).then(renderResults);\n                return;\n            }\n            if (action === \"add\") {\n                addBook();\n                return;\n            }\n            if (action === \"open\") {\n                e.preventDefault();\n                e.stopPropagation();\n                // Ctrl/Cmd+клик инвертирует настройку openInNewTab\n                const newTab = cfg.openInNewTab !== (e.ctrlKey || e.metaKey);\n                app.workspace.openLinkText(actionEl.dataset.path, \"\", newTab);\n                return;\n            }\n        }\n\n        // Название в списке — внутренняя ссылка Obsidian (работает превью при наведении)\n        const link = e.target.closest(\"a[data-href]\");\n        if (link) {\n            e.preventDefault();\n            e.stopPropagation(); // чтобы штатный обработчик Obsidian не открыл заметку второй раз\n            const newTab = cfg.openInNewTab !== (e.ctrlKey || e.metaKey);\n            app.workspace.openLinkText(link.dataset.href, \"\", newTab);\n        }\n    });\n\n    update();\n    Notes.hydrate(root, Cards.fill); // инсайт месяца\n}\n\nmodule.exports = { mount };\n","utils":"// src/utils.js — небольшие общие функции без зависимостей от настроек.\n\nconst ESC_MAP = { \"&\": \"&amp;\", \"<\": \"&lt;\", \">\": \"&gt;\", '\"': \"&quot;\", \"'\": \"&#39;\" };\nconst esc = (s) => String(s ?? \"\").replace(/[&<>\"']/g, (c) => ESC_MAP[c]);\n\n// Создать DOM-элемент: el(\"div\", \"класс\", { textContent: \"...\" })\nconst el = (tag, className, props) => {\n    const node = document.createElement(tag);\n    if (className) node.className = className;\n    if (props) Object.assign(node, props);\n    return node;\n};\n\n// Значение свойства -> плоский массив без пустых значений.\n// В frontmatter ссылка [[Имя]] без кавычек приходит как вложенный массив [[\"Имя\"]] — разворачиваем\nconst toArray = (v) => {\n    if (v === undefined || v === null || v === \"\") return [];\n    if (Array.isArray(v)) return v.flatMap(toArray);\n    return [v];\n};\n\n// Массив строк без пустых значений (для классов и т.п.)\nconst toStringList = (v) => toArray(v).map(String).filter(Boolean);\n\n// \"[[Папка/Имя|Псевдоним]]\" -> \"Имя\" (текст для показа); обычная строка возвращается как есть\nconst itemToString = (item) => {\n    const s = String(item ?? \"\").trim();\n    const m = s.match(/^!?\\[\\[([^\\]]*)\\]\\]$/);\n    if (!m) return s;\n    const [target, alias] = m[1].split(\"|\");\n    if (alias && alias.trim()) return alias.trim();\n    return target.split(\"#\")[0].split(\"/\").pop().replace(/\\.md$/i, \"\").trim();\n};\n\n// Список значений с разбором \"a, b, c\"\nconst splitList = (v) =>\n    toArray(v)\n        .flatMap((item) => itemToString(item).split(\",\"))\n        .map((s) => s.trim())\n        .filter(Boolean);\n\n// Значение даты -> миллисекунды (локальное время). Понимает 2026-09-07, 2026-09-07T10:00, 07.09.2026, Date и числа\nconst toMillis = (d) => {\n    d = toArray(d)[0];\n    if (!d) return 0;\n    if (typeof d === \"number\") return d;\n    if (d instanceof Date) return d.getTime();\n    const s = String(d).trim();\n    let m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:[T ](\\d{2}):(\\d{2})(?::(\\d{2}))?)?/);\n    if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();\n    m = s.match(/^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$/);\n    if (m) return new Date(+m[3], +m[2] - 1, +m[1]).getTime();\n    const t = Date.parse(s);\n    return Number.isNaN(t) ? 0 : t;\n};\n\n// Число из значения свойства («4,5», 4.5, \"12\") или null\nconst toNumber = (v) => {\n    if (v === undefined || v === null || v === \"\") return null;\n    const n = parseFloat(String(v).replace(\",\", \".\"));\n    return Number.isNaN(n) ? null : n;\n};\n\n// Склонение: plural(5, [\"книга\", \"книги\", \"книг\"]) -> \"книг\"\nconst plural = (n, forms) => {\n    const a = Math.abs(n) % 100;\n    const b = a % 10;\n    if (a > 10 && a < 20) return forms[2];\n    if (b > 1 && b < 5) return forms[1];\n    if (b === 1) return forms[0];\n    return forms[2];\n};\n\n// 1920 -> \"1 920\" (с неразрывным пробелом)\nconst fmtInt = (n) => String(Math.round(n)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, \"\\u00a0\");\n\n// Дата (мс) -> строка по формату в стиле Luxon: dd MMMM yyyy -> «07 сентября 2026».\n// Токены: yyyy yy MMMM MMM MM M dd d EEEE EEE. Текст в одинарных кавычках выводится как есть.\n// Привычные YYYY / YY / D из moment тоже понимаются.\nconst DATE_TOKENS = /yyyy|yy|MMMM|MMM|MM|M|dd|d|EEEE|EEE/g;\n\nfunction formatDate(ms, fmt, locale) {\n    if (!ms) return \"\";\n    const d = new Date(ms);\n    const loc = locale || \"ru\";\n    const f = String(fmt || \"dd MMMM yyyy\").replace(/YYYY/g, \"yyyy\").replace(/YY/g, \"yy\").replace(/D/g, \"d\");\n    const hasDay = /d/.test(f.replace(/'[^']*'/g, \"\"));\n    const pad = (n) => String(n).padStart(2, \"0\");\n    const part = (opts, type) => {\n        try {\n            const p = new Intl.DateTimeFormat(loc, opts).formatToParts(d).find((x) => x.type === type);\n            return p ? p.value : \"\";\n        } catch (e) {\n            return \"\";\n        }\n    };\n    // с числом месяц склоняется («7 сентября»), без числа — именительный («сентябрь»)\n    const month = (style) => part(hasDay ? { day: \"numeric\", month: style } : { month: style }, \"month\");\n\n    const map = {\n        yyyy: () => String(d.getFullYear()),\n        yy: () => pad(d.getFullYear() % 100),\n        MMMM: () => month(\"long\"),\n        MMM: () => month(\"short\"),\n        MM: () => pad(d.getMonth() + 1),\n        M: () => String(d.getMonth() + 1),\n        dd: () => pad(d.getDate()),\n        d: () => String(d.getDate()),\n        EEEE: () => part({ weekday: \"long\" }, \"weekday\"),\n        EEE: () => part({ weekday: \"short\" }, \"weekday\"),\n    };\n    return f\n        .split(/('[^']*')/)\n        .map((seg) => (seg.startsWith(\"'\") ? seg.slice(1, -1) : seg.replace(DATE_TOKENS, (t) => map[t]())))\n        .join(\"\");\n}\n\n// Безопасный url(...) для inline-стиля\nconst cssUrl = (u) =>\n    `url('${String(u).replace(/['\"()\\\\\\s]/g, (c) => \"%\" + c.charCodeAt(0).toString(16).padStart(2, \"0\"))}')`;\n\n// Значение свойства по имени: точное совпадение, затем без учёта регистра, пробелов, «_» и «-»\n// (как в Dataview: «Cover», «cover» и «COVER» — одно и то же свойство)\nconst normKey = (k) => String(k).toLowerCase().replace(/[\\s_-]+/g, \"\");\nconst prop = (fm, name) => {\n    if (!fm || !name) return undefined;\n    if (Object.prototype.hasOwnProperty.call(fm, name)) return fm[name];\n    const want = normKey(name);\n    for (const k of Object.keys(fm)) if (normKey(k) === want) return fm[k];\n    return undefined;\n};\n\n// \"/Книги/\" -> \"Книги\" (\"\" или \"/\" — всё хранилище)\nconst normFolder = (f) => String(f ?? \"\").trim().replace(/^\\/+|\\/+$/g, \"\");\n\nmodule.exports = { prop, normFolder, esc, el, toArray, toStringList, itemToString, splitList, toMillis, toNumber, plural, fmtInt, cssUrl, formatDate };\n","view":"// src/view.js — отдельная вкладка «Каталог книг» (открывается командой или кнопкой на боковой панели).\n\nconst { ItemView } = ctx.obsidian;\nconst VIEW_TYPE = \"book-gallery-view\";\n\nclass BookGalleryView extends ItemView {\n    constructor(leaf) {\n        super(leaf);\n        this.host = null;\n    }\n\n    getViewType() {\n        return VIEW_TYPE;\n    }\n\n    getDisplayText() {\n        return \"Каталог книг\";\n    }\n\n    getIcon() {\n        return \"book-open\";\n    }\n\n    async onOpen() {\n        this.contentEl.empty();\n        this.contentEl.addClass(\"book-gallery-view\");\n        const holder = this.contentEl.createDiv();\n        // в отдельной вкладке заголовок «Каталог…» остаётся из настроек, ширина и так полная\n        this.host = ctx.plugin.createHost(holder, { fullWidth: false }, this);\n        await this.host.render();\n    }\n\n    async onClose() {\n        if (this.host) this.host.destroy();\n        this.host = null;\n    }\n}\n\nmodule.exports = { BookGalleryView, VIEW_TYPE };\n"},"styles":{"base":"/* ---------- Основа: контейнер, сброс стилей Obsidian, общие элементы ---------- */\n\n.bg-root {\n    container-type: inline-size;       /* адаптивность считается от ширины блока, а не окна */\n    display: flex;\n    flex-direction: column;\n    gap: 20px;\n    margin: 8px 0 24px;\n    font-family: \"Inter\", var(--font-interface, system-ui), sans-serif;\n    font-size: 14px;\n    line-height: 1.4;\n    color: var(--bg-text);\n}\n\n.bg-root *,\n.bg-root *::before,\n.bg-root *::after {\n    box-sizing: border-box;\n}\n\n.bg-root .bg-mono {\n    font-family: \"JetBrains Mono\", \"Space Mono\", var(--font-monospace, ui-monospace), monospace;\n    letter-spacing: 0.02em;\n}\n\n.bg-root .bg-accent {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-down {\n    color: var(--bg-danger);\n}\n\n/* Иконки наследуют размер шрифта родителя */\n.bg-root .bg-ico {\n    width: 1.25em;\n    height: 1.25em;\n    flex: none;\n}\n\n.bg-root .bg-ico--fill {\n    fill: currentColor;\n}\n\n.bg-root .bg-star {\n    color: var(--bg-star);\n}\n\n/* Сброс стандартных стилей кнопок и полей Obsidian */\n.bg-root button,\n.bg-root input,\n.bg-root select {\n    appearance: none;\n    -webkit-appearance: none;\n    height: auto !important;\n    min-height: 0;\n    margin: 0;\n    padding: 0;\n    border: 0;\n    border-radius: 0;\n    background: none;\n    box-shadow: none;\n    outline: none;\n    font: inherit;\n    color: inherit;\n}\n\n.bg-root button {\n    cursor: pointer;\n    text-align: inherit;\n}\n\n.bg-root button:focus-visible,\n.bg-root input:focus-visible,\n.bg-root select:focus-visible {\n    outline: 2px solid var(--bg-accent-line);\n    outline-offset: 2px;\n}\n\n/* ---------- Кнопки ---------- */\n.bg-root .bg-btn {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    padding: 9px 16px;\n    border-radius: 10px;\n    font-weight: 600;\n    white-space: nowrap;\n    transition: filter 0.15s, transform 0.15s;\n}\n\n.bg-root .bg-btn--primary {\n    background: var(--bg-accent-bg) !important;\n    color: var(--bg-accent-ink) !important;\n}\n\n.bg-root .bg-btn--primary:hover {\n    filter: brightness(1.06);\n}\n\n/* ---------- Плашки и бейджи ---------- */\n.bg-root .bg-pill {\n    display: inline-block;\n    padding: 2px 8px;\n    border-radius: 999px;\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n    font-size: 11px;\n    font-weight: 500;\n    vertical-align: middle;\n}\n\n.bg-root .bg-pill[hidden] {\n    display: none;\n}\n\n.bg-root .bg-badge {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    padding: 4px 10px;\n    border-radius: 6px;\n    font-size: 11px;\n    font-weight: 600;\n    letter-spacing: 0.08em;\n    text-transform: uppercase;\n}\n\n.bg-root .bg-badge--accent {\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n    border: 1px solid var(--bg-accent-line);\n}\n\n.bg-root .bg-badge--soft {\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n    text-transform: none;\n    letter-spacing: 0.02em;\n}\n\n.bg-root .bg-badge--danger {\n    background: var(--bg-danger-soft);\n    color: var(--bg-danger);\n    border: 1px solid var(--bg-danger-line);\n}\n\n.bg-root .bg-empty {\n    padding: 40px 16px;\n    text-align: center;\n    color: var(--bg-text-3);\n    border: 1px dashed var(--bg-border);\n    border-radius: 16px;\n}\n\n.bg-root .bg-footer {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    gap: 8px;\n    padding: 10px 16px;\n    border-radius: 999px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    color: var(--bg-text-3);\n    font-size: 12px;\n    align-self: center;\n}\n\n.bg-root .bg-footer .bg-ico {\n    color: var(--bg-accent);\n}\n","cards":"/* ---------- Staggered grid ----------\n   Колонки одинаковой ширины (--cols), карточки разной высоты. Строки сетки мелкие (4px), каждая карточка\n   занимает столько строк, сколько ей нужно: src/cards.js измеряет высоту и ставит grid-row-end.\n   dense кладёт следующую карточку в самое высокое свободное место, то есть в самую низкую колонку.\n   Широкая карточка (.bg-card--wide) занимает две колонки. */\n\n.bg-root .bg-stagger {\n    display: grid;\n    grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));\n    grid-auto-rows: 4px;\n    grid-auto-flow: row dense;\n    column-gap: 16px;\n    row-gap: 0;\n    align-items: start;\n}\n\n.bg-root .bg-stagger > .bg-card--wide {\n    grid-column: span 2;\n    min-height: 340px;\n}\n\n.bg-root .bg-stagger > .bg-card--wide.is-solo {\n    grid-column: span 1;\n    grid-template-columns: minmax(0, 1fr);\n    min-height: 0;\n}\n\n.bg-root .bg-card--wide.is-solo .bg-cover {\n    height: 260px;\n}\n\n.bg-root .bg-stagger > .bg-card--featured {\n    min-height: 440px;\n}\n\n.bg-root .bg-card {\n    display: flex;\n    flex-direction: column;\n    gap: 14px;\n    min-width: 0;\n    min-height: 0;\n    padding: 14px;\n    overflow: hidden;\n    border-radius: 16px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    box-shadow: var(--bg-shadow);\n    cursor: pointer;\n    transition: border-color 0.15s, box-shadow 0.15s;\n}\n\n/* Только цвет рамки и тень: карточка не двигается, поэтому курсор не «выпадает» из-под неё */\n.bg-root .bg-card:hover {\n    border-color: var(--bg-accent-line);\n    box-shadow: 0 0 0 1px var(--bg-accent-line);\n}\n\n/* ---------- Обложка: сама картинка поверх размытой копии ---------- */\n.bg-root .bg-cover {\n    position: relative;\n    display: grid;\n    place-items: center;\n    overflow: hidden;\n    border-radius: 12px;\n    background: var(--bg-chip);\n}\n\n.bg-root .bg-cover-img {\n    position: absolute;\n    inset: 0;\n    width: 100%;\n    height: 100%;\n    margin: 0 !important;\n    object-fit: cover;              /* картинка заполняет всю область обложки и обрезается по краям (crop) */\n    display: block;\n}\n\n/* coverFit: contain — вся обложка целиком, без обрезки (поля остаются пустыми) */\n.bg-root.bg-root--fit-contain .bg-cover-img {\n    object-fit: contain;\n}\n\n/* пока уменьшенная копия не готова, картинку не показываем (иначе мелькает значок битого изображения) */\n.bg-root .bg-cover-img:not([src]) {\n    visibility: hidden;\n}\n\n.bg-root .bg-score {\n    position: absolute;\n    top: 10px;\n    right: 10px;\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    padding: 4px 10px;\n    border-radius: 8px;\n    background: var(--bg-badge);\n    color: var(--bg-badge-text);\n    font-size: 13px;\n    font-weight: 600;\n}\n\n.bg-root .bg-score .bg-ico {\n    font-size: 16px;\n}\n\n.bg-root .bg-cover-tag {\n    position: absolute;\n    left: 10px;\n    bottom: 10px;\n    max-width: calc(100% - 20px);\n    padding: 3px 10px;\n    border-radius: 8px;\n    background: var(--bg-badge);\n    color: var(--bg-text);\n    font-size: 12px;\n    white-space: nowrap;\n    overflow: hidden;\n    text-overflow: ellipsis;\n}\n\n.bg-root .bg-cover-flag {\n    position: absolute;\n    left: 8px;\n    right: 8px;\n    bottom: 8px;\n    padding: 4px 8px;\n    border-radius: 6px;\n    text-align: center;\n    font-size: 10.5px;\n    font-weight: 700;\n    letter-spacing: 0.1em;\n    text-transform: uppercase;\n    background: var(--bg-danger-soft);\n    border: 1px solid var(--bg-danger-line);\n    color: var(--bg-danger);\n}\n\n/* плашка «Разочарование» внизу обложки: тег поднимается выше, чтобы они не накладывались */\n.bg-root .bg-cover:has(.bg-cover-flag) .bg-cover-tag {\n    bottom: 44px;\n}\n\n/* Нет обложки: плашка с названием и автором */\n.bg-root .bg-ph {\n    position: absolute;\n    inset: 0;\n    display: flex;\n    flex-direction: column;\n    align-items: center;\n    justify-content: center;\n    gap: 4px;\n    padding: 14px;\n    text-align: center;\n    color: var(--bg-accent);\n    font-size: 26px;\n    background: linear-gradient(135deg, var(--bg-accent-soft), transparent 75%), var(--bg-chip);\n}\n\n.bg-root .bg-ph-title {\n    font-size: 15px;\n    font-weight: 600;\n    line-height: 1.25;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-ph-author {\n    font-size: 12px;\n    color: var(--bg-text-2);\n}\n\n/* ---------- Вертикальная карточка: обложка забирает всё свободное место ---------- */\n.bg-root .bg-card--tall .bg-cover {\n    flex: none;\n    aspect-ratio: 1 / var(--ratio, 1.5);\n}\n\n/* Карточка растянута, чтобы закрыть щель рядом с широкой: обложка забирает добавленную высоту */\n.bg-root .bg-card--tall.is-stretched .bg-cover,\n.bg-root .bg-card--wide.is-stretched .bg-cover {\n    flex: 1 1 0;\n    aspect-ratio: auto;\n    min-height: 120px;\n}\n\n.bg-root .bg-card-body {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    padding: 0 4px;\n    min-width: 0;\n}\n\n.bg-root .bg-card--tall .bg-card-body {\n    flex: none;\n}\n\n.bg-root .bg-card-meta {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 8px;\n    font-size: 12px;\n}\n\n.bg-root .bg-genre {\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    flex: 1 1 auto;\n    min-width: 0;\n    color: var(--bg-accent);\n    font-size: 12.5px;\n}\n\n.bg-root .bg-ellipsis {\n    min-width: 0;\n    overflow: hidden;\n    white-space: nowrap;\n    text-overflow: ellipsis;\n}\n\n.bg-root .bg-genre .bg-ico {\n    font-size: 16px;\n}\n\n.bg-root .bg-date {\n    flex: none;\n    color: var(--bg-text-2);\n    font-size: 12px;\n}\n\n.bg-root .bg-card-title {\n    font-size: 18px;\n    font-weight: 600;\n    line-height: 1.25;\n    color: var(--bg-text);\n    display: -webkit-box;\n    -webkit-line-clamp: 2;\n    -webkit-box-orient: vertical;\n    overflow: hidden;\n}\n\n.bg-root .bg-card-title--lg {\n    font-size: 26px;\n    font-weight: 700;\n    letter-spacing: -0.01em;\n    -webkit-line-clamp: 2;\n}\n\n.bg-root .bg-card-author {\n    font-size: 14px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-card-stats {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    gap: 10px;\n    margin-top: 6px;\n    padding: 8px 12px;\n    border-radius: 8px;\n    background: var(--bg-surface-2);\n    font-size: 12px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-dot {\n    font-style: normal;\n    opacity: 0.6;\n}\n\n.bg-root .bg-label-text {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-label-text--danger {\n    color: var(--bg-danger);\n}\n\n/* ---------- Горизонтальная карточка: обложка слева, текст справа ---------- */\n.bg-root .bg-card--wide {\n    display: grid;\n    grid-template-columns: minmax(140px, min(38%, 300px)) minmax(0, 1fr);\n    gap: 22px;\n    padding: 18px;\n}\n\n.bg-root .bg-card--wide .bg-cover {\n    height: 100%;\n    min-height: 0;\n}\n\n.bg-root .bg-card--wide .bg-card-body {\n    gap: 8px;\n    padding: 0;\n    min-height: 0;\n    overflow: hidden;\n}\n\n.bg-root .bg-card--wide .bg-card-body > * {\n    flex: none;\n}\n\n.bg-root .bg-card--wide .bg-card-body > .bg-quote {\n    flex: 0 1 auto;\n}\n\n.bg-root .bg-card--featured {\n    background: radial-gradient(circle at 100% 100%, var(--bg-glow), transparent 55%), var(--bg-surface);\n}\n\n.bg-root .bg-card--low {\n    border-color: var(--bg-danger-line);\n}\n\n.bg-root .bg-card--low:hover {\n    border-color: var(--bg-danger);\n}\n\n.bg-root .bg-meta {\n    display: grid;\n    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));\n    gap: 12px;\n    margin-top: 6px;\n}\n\n.bg-root .bg-meta-k {\n    font-size: 11px;\n    color: var(--bg-text-3);\n}\n\n.bg-root .bg-meta-v {\n    display: inline-flex;\n    align-items: center;\n    gap: 4px;\n    font-size: 14px;\n    font-weight: 600;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-meta-v--accent {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-card--wide .bg-card-foot {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    margin-top: auto;\n    padding-top: 8px;\n}\n\n.bg-root .bg-tags-plain {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 6px;\n}\n\n.bg-root .bg-tag-plain {\n    padding: 3px 10px;\n    border-radius: 6px;\n    background: var(--bg-chip);\n    color: var(--bg-text-2);\n    font-size: 12px;\n}\n\n.bg-root .bg-snippet {\n    margin-top: 4px;\n    padding: 8px 10px;\n    border-radius: 8px;\n    background: var(--bg-surface-2);\n    font-size: 12.5px;\n    line-height: 1.45;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-snippet .bg-quote-text {\n    -webkit-line-clamp: 3;\n    font-style: normal;\n}\n\n.bg-root .bg-snippet:hover {\n    color: var(--bg-text);\n}\n\n/* ---------- Случайная заметка. Клик по блоку открывает показанную заметку ---------- */\n.bg-root .bg-quote {\n    display: flex;\n    flex-direction: column;\n    gap: 8px;\n    min-height: 0;\n    margin-top: 6px;\n    padding: 12px 14px;\n    overflow: hidden;\n    border-radius: 10px;\n    background: var(--bg-surface-2);\n    border: 1px solid var(--bg-border);\n    font-size: 13px;\n    line-height: 1.45;\n    color: var(--bg-text-2);\n    transition: border-color 0.15s;\n}\n\n.bg-root .bg-quote:hover {\n    border-color: var(--bg-accent-line);\n}\n\n.bg-root .bg-quote-text {\n    font-style: italic;\n    display: -webkit-box;\n    -webkit-line-clamp: 7;\n    -webkit-box-orient: vertical;\n    overflow: hidden;\n    min-height: 0;\n}\n\n.bg-root .bg-quote-cap {\n    flex: none;\n}\n\n.bg-root .bg-quote-cap {\n    display: flex;\n    align-items: center;\n    gap: 6px;\n    font-size: 12px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-quote-cap .bg-ico {\n    color: var(--bg-accent);\n    font-size: 15px;\n}\n\n.bg-root .bg-reroll {\n    display: inline-grid;\n    place-items: center;\n    width: 24px;\n    height: 24px;\n    margin-left: auto;\n    border-radius: 6px;\n    color: var(--bg-text-3);\n    transition: background 0.15s, color 0.15s;\n}\n\n.bg-root .bg-reroll:hover:not(:disabled) {\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-reroll:disabled {\n    opacity: 0.5;\n    cursor: progress;\n}\n\n.bg-root .bg-note-comment {\n    display: flex;\n    flex: none;\n    align-items: flex-start;\n    gap: 8px;\n    font-size: 12.5px;\n    line-height: 1.45;\n    color: var(--bg-text-3);\n}\n\n.bg-root .bg-note-comment span {\n    display: -webkit-box;\n    -webkit-line-clamp: 2;\n    -webkit-box-orient: vertical;\n    overflow: hidden;\n}\n\n.bg-root .bg-note-comment[hidden] {\n    display: none;\n}\n\n.bg-root .bg-note-comment .bg-ico {\n    margin-top: 2px;\n    font-size: 14px;\n    color: var(--bg-accent);\n}\n\n/* ---------- Узкий блок (телефон): две колонки ---------- */\n@container (max-width: 640px) {\n    .bg-root .bg-stagger {\n        column-gap: 12px;\n    }\n\n    .bg-root .bg-stagger > .bg-card--wide,\n    .bg-root .bg-stagger > .bg-card--featured {\n        min-height: 240px;\n    }\n\n    .bg-root .bg-card {\n        padding: 10px;\n        gap: 10px;\n    }\n\n    .bg-root .bg-card-title {\n        font-size: 15px;\n    }\n\n    .bg-root .bg-card--tall .bg-snippet,\n    .bg-root .bg-card--tall .bg-genre,\n    .bg-root .bg-card--tall .bg-card-stats .bg-label-text,\n    .bg-root .bg-card--tall .bg-card-stats .bg-dot {\n        display: none;\n    }\n\n    .bg-root .bg-card--wide {\n        grid-template-columns: 100px minmax(0, 1fr);\n        gap: 12px;\n        padding: 10px;\n    }\n\n    .bg-root .bg-card--wide .bg-card-title--lg {\n        font-size: 18px;\n        -webkit-line-clamp: 2;\n    }\n\n    .bg-root .bg-card--wide .bg-meta,\n    .bg-root .bg-card--wide .bg-card-foot {\n        display: none;\n    }\n\n    .bg-root .bg-quote {\n        padding: 8px 10px;\n        font-size: 12px;\n    }\n\n    .bg-root .bg-quote-text {\n        -webkit-line-clamp: 3;\n    }\n\n    .bg-root .bg-badge {\n        font-size: 10px;\n        padding: 3px 8px;\n    }\n}\n\n/* Большой вариант вертикальной карточки: цитата целиком */\n.bg-root .bg-card--big .bg-card-title {\n    font-size: 20px;\n}\n","filters":"/* ---------- Панель «Конфигуратор фильтров» ---------- */\n\n.bg-root .bg-panel {\n    border-radius: 16px;\n    overflow: hidden;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    box-shadow: var(--bg-shadow);\n}\n\n.bg-root .bg-panel-head {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    justify-content: space-between;\n    gap: 12px 16px;\n    padding: 14px 20px;\n    background: var(--bg-surface-2);\n    border-bottom: 1px solid var(--bg-border);\n}\n\n.bg-root .bg-panel-title {\n    display: flex;\n    align-items: center;\n    gap: 12px;\n    min-width: 0;\n}\n\n.bg-root .bg-ico-box {\n    display: grid;\n    place-items: center;\n    width: 40px;\n    height: 40px;\n    flex: none;\n    border-radius: 10px;\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n    font-size: 20px;\n}\n\n.bg-root .bg-panel-name {\n    font-size: 16px;\n    font-weight: 600;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-panel-sub {\n    font-size: 13px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-panel-actions {\n    display: flex;\n    align-items: center;\n    gap: 12px;\n    margin-left: auto;\n}\n\n/* Переключатель «Карточки / Список» */\n.bg-root .bg-seg {\n    display: inline-flex;\n    padding: 3px;\n    gap: 2px;\n    border-radius: 10px;\n    background: var(--bg-input);\n    border: 1px solid var(--bg-border);\n}\n\n.bg-root .bg-seg-btn {\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    padding: 7px 12px;\n    border-radius: 8px;\n    font-size: 13px;\n    color: var(--bg-text-2);\n    transition: background 0.15s, color 0.15s;\n}\n\n.bg-root .bg-seg-btn:hover {\n    color: var(--bg-text);\n}\n\n.bg-root .bg-seg-btn.is-on {\n    background: var(--bg-surface);\n    color: var(--bg-accent);\n    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);\n}\n\n.bg-root .bg-ghost {\n    white-space: nowrap;\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    padding: 7px 10px;\n    border-radius: 8px;\n    font-size: 12px;\n    letter-spacing: 0.04em;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-ghost:hover {\n    color: var(--bg-accent);\n    background: var(--bg-accent-soft);\n}\n\n/* ---------- Тело панели ---------- */\n.bg-root .bg-panel-body {\n    display: flex;\n    flex-direction: column;\n    gap: 18px;\n    padding: 20px;\n}\n\n.bg-root .bg-row {\n    display: grid;\n    grid-template-columns: 1fr minmax(220px, 280px);\n    gap: 12px;\n}\n\n.bg-root .bg-search {\n    display: flex;\n    align-items: center;\n    gap: 12px;\n    padding: 0 16px;\n    border-radius: 12px;\n    background: var(--bg-input);\n    border: 1px solid var(--bg-border);\n    color: var(--bg-text-3);\n    font-size: 18px;\n    transition: border-color 0.15s;\n}\n\n.bg-root .bg-search:focus-within {\n    border-color: var(--bg-accent-line);\n}\n\n.bg-root .bg-search-input {\n    flex: 1;\n    min-width: 0;\n    padding: 14px 0 !important;\n    font-size: 14px;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-search-input::placeholder {\n    color: var(--bg-text-3);\n}\n\n.bg-root .bg-two {\n    display: grid;\n    grid-template-columns: 1fr 1fr;\n    gap: 16px;\n}\n\n.bg-root .bg-field {\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n    min-width: 0;\n}\n\n.bg-root .bg-label-row {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 8px;\n    flex-wrap: wrap;\n}\n\n.bg-root .bg-label {\n    display: flex;\n    align-items: center;\n    gap: 8px;\n    font-size: 12px;\n    letter-spacing: 0.08em;\n    text-transform: uppercase;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-label .bg-ico {\n    color: var(--bg-accent);\n    font-size: 18px;\n}\n\n.bg-root .bg-hint {\n    font-size: 11px;\n    color: var(--bg-text-3);\n}\n\n/* Выпадающие списки */\n.bg-root .bg-select {\n    position: relative;\n    display: flex;\n    align-items: center;\n    border-radius: 12px;\n    background: var(--bg-input);\n    border: 1px solid var(--bg-border);\n}\n\n.bg-root .bg-select select {\n    width: 100%;\n    padding: 13px 40px 13px 16px !important;\n    cursor: pointer;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-select select option {\n    background: var(--bg-surface);\n    color: var(--bg-text);\n}\n\n.bg-root .bg-select-arrow {\n    position: absolute;\n    right: 12px;\n    pointer-events: none;\n    color: var(--bg-text-2);\n}\n\n/* Чипы: теги и оценка */\n.bg-root .bg-chips {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 8px;\n}\n\n.bg-root .bg-chip {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    padding: 6px 14px;\n    border-radius: 999px;\n    background: var(--bg-input) !important;\n    border: 1px solid var(--bg-border) !important;\n    color: var(--bg-text-2);\n    font-size: 12.5px;\n    transition: background 0.15s, color 0.15s, border-color 0.15s;\n}\n\n.bg-root .bg-chip:hover {\n    border-color: var(--bg-accent-line) !important;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-chip.is-on {\n    background: var(--bg-accent-bg) !important;\n    border-color: var(--bg-accent-bg) !important;\n    color: var(--bg-accent-ink) !important;\n    font-weight: 600;\n}\n\n.bg-root .bg-chip--score {\n    border-radius: 8px;\n    padding: 7px 14px;\n}\n\n.bg-root .bg-chip--score .bg-ico {\n    font-size: 16px;\n}\n\n.bg-root .bg-chip--danger {\n    color: var(--bg-danger);\n}\n\n.bg-root .bg-chip--danger.is-on {\n    background: var(--bg-danger-soft) !important;\n    border-color: var(--bg-danger-line) !important;\n    color: var(--bg-danger) !important;\n}\n\n.bg-root .bg-chip--sm {\n    padding: 2px 10px;\n    font-size: 11.5px;\n}\n\n.bg-root .bg-tag-find {\n    width: 100%;\n    padding: 10px 14px !important;\n    border-radius: 10px;\n    border: 1px dashed var(--bg-border) !important;\n    background: var(--bg-input) !important;\n    font-size: 12.5px;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-tag-find::placeholder {\n    color: var(--bg-text-3);\n}\n\n/* Сворачиваемая панель тегов */\n.bg-root .bg-label--btn {\n    margin-left: -6px;\n    padding: 3px 6px;\n    border-radius: 8px;\n    cursor: pointer;\n    transition: background 0.15s, color 0.15s;\n}\n\n.bg-root .bg-label--btn:hover {\n    background: var(--bg-accent-soft);\n    color: var(--bg-text);\n}\n\n.bg-root .bg-fold {\n    transition: transform 0.2s;\n}\n\n.bg-root .bg-field--tags.is-collapsed .bg-fold {\n    transform: rotate(180deg);\n}\n\n.bg-root .bg-tags-body {\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n}\n\n.bg-root .bg-field--tags.is-collapsed .bg-tags-body,\n.bg-root .bg-field--tags.is-collapsed .bg-hint {\n    display: none;\n}\n\n/* Подвал: применённые фильтры и число совпадений */\n.bg-root .bg-panel-foot {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    justify-content: space-between;\n    gap: 10px 16px;\n    padding: 12px 20px;\n    background: var(--bg-surface-2);\n    border-top: 1px solid var(--bg-border);\n    font-size: 12px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-foot-left,\n.bg-root .bg-foot-right {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    gap: 8px;\n}\n\n.bg-root .bg-applied {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    padding: 4px 10px;\n    border-radius: 999px;\n    background: var(--bg-chip);\n    color: var(--bg-text);\n}\n\n.bg-root .bg-applied .bg-ico {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-last {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    color: var(--bg-accent);\n}\n\n@container (max-width: 640px) {\n    .bg-root .bg-panel-head {\n        padding: 12px 14px;\n    }\n\n    .bg-root .bg-panel-sub {\n        display: none;\n    }\n\n    .bg-root .bg-ghost span {\n        display: none;\n    }\n\n    .bg-root .bg-panel-actions {\n        width: 100%;\n        justify-content: space-between;\n    }\n\n    .bg-root .bg-panel-body {\n        padding: 14px;\n        gap: 14px;\n    }\n\n    .bg-root .bg-row,\n    .bg-root .bg-two {\n        grid-template-columns: 1fr;\n    }\n\n    .bg-root .bg-panel-foot {\n        padding: 10px 14px;\n    }\n}\n","header":"/* ---------- Заголовок страницы ---------- */\n\n.bg-root .bg-header {\n    display: flex;\n    flex-wrap: wrap;\n    align-items: center;\n    justify-content: space-between;\n    gap: 12px 16px;\n}\n\n.bg-root .bg-title {\n    font-size: 32px;\n    line-height: 1.15;\n    font-weight: 800;\n    letter-spacing: -0.02em;\n    color: var(--bg-title);\n}\n\n.bg-root .bg-header-actions {\n    display: flex;\n    align-items: center;\n    gap: 12px;\n    margin-left: auto;\n}\n\n.bg-root .bg-count {\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    padding: 8px 12px;\n    border-radius: 10px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    color: var(--bg-text-2);\n    font-size: 13px;\n    white-space: nowrap;\n}\n\n.bg-root .bg-count .bg-ico {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-count b {\n    color: var(--bg-text);\n    font-weight: 600;\n}\n\n@container (max-width: 640px) {\n    .bg-root .bg-title {\n        font-size: 26px;\n    }\n\n    .bg-root .bg-count {\n        display: none;\n    }\n\n    .bg-root .bg-btn--primary {\n        padding: 8px 12px;\n    }\n}\n","layout":"/* ---------- Ширина на весь экран (опция fullWidth) ----------\n   Классы вешает на заметку lib/layout.js.\n   .full-width — то же имя, что в cssclasses; .book-gallery-fw — собственный класс,\n   он добавляется всегда, даже если fullWidthClasses пустой. */\n.full-width,\n.book-gallery-fw {\n    --file-line-width: 100%;\n}\n\n.full-width .markdown-source-view.is-readable-line-width .cm-sizer,\n.full-width .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,\n.full-width.markdown-source-view.is-readable-line-width .cm-sizer,\n.full-width.markdown-preview-view.is-readable-line-width .markdown-preview-sizer,\n.book-gallery-fw .markdown-source-view.is-readable-line-width .cm-sizer,\n.book-gallery-fw .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,\n.book-gallery-fw.markdown-source-view.is-readable-line-width .cm-sizer,\n.book-gallery-fw.markdown-preview-view.is-readable-line-width .markdown-preview-sizer {\n    max-width: 100% !important;\n}\n","list":"/* ---------- Режим «Список» ---------- */\n\n.bg-root .bg-list-wrap {\n    overflow-x: auto;\n    border-radius: 16px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    box-shadow: var(--bg-shadow);\n}\n\n.bg-root .bg-list {\n    width: 100% !important;\n    min-width: 640px;\n    margin: 0 !important;\n    border-collapse: collapse;\n    border: 0 !important;\n    font-size: 13.5px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-list th,\n.bg-root .bg-list td {\n    padding: 12px 14px !important;\n    border: 0 !important;\n    border-bottom: 1px solid var(--bg-border) !important;\n    text-align: left;\n    vertical-align: middle;\n    background: transparent !important;\n}\n\n.bg-root .bg-list th {\n    font-family: \"JetBrains Mono\", \"Space Mono\", var(--font-monospace, ui-monospace), monospace;\n    font-size: 11px;\n    font-weight: 500;\n    letter-spacing: 0.08em;\n    text-transform: uppercase;\n    white-space: nowrap;\n    color: var(--bg-text-3);\n    background: var(--bg-surface-2) !important;\n}\n\n.bg-root .bg-list tbody tr:last-child td {\n    border-bottom: 0 !important;\n}\n\n.bg-root .bg-list tbody tr:hover td {\n    background: var(--bg-surface-2) !important;\n}\n\n.bg-root .bg-list th:first-child,\n.bg-root .bg-list td:first-child {\n    width: 64px;\n    text-align: center;\n}\n\n.bg-root .bg-list td:nth-child(2) {\n    width: 32%;\n}\n\n.bg-root .bg-thumb {\n    display: inline-block;\n    width: 44px;\n    height: 64px;\n    object-fit: cover;\n    border-radius: 6px;\n    background: var(--bg-chip);\n}\n\n.bg-root .bg-list-title {\n    font-weight: 600;\n    color: var(--bg-text) !important;\n    text-decoration: none !important;\n}\n\n.bg-root .bg-list-title:hover {\n    color: var(--bg-accent) !important;\n}\n\n.bg-root .bg-nowrap {\n    white-space: nowrap;\n}\n\n.bg-root .bg-stars .star-full {\n    color: var(--bg-star);\n}\n\n.bg-root .bg-stars .star-empty {\n    color: var(--bg-hover);\n}\n\n.bg-root .bg-stars .star-half {\n    background: linear-gradient(90deg, var(--bg-star) 50%, var(--bg-hover) 50%);\n    -webkit-background-clip: text;\n    background-clip: text;\n    -webkit-text-fill-color: transparent;\n}\n\n.bg-root .bg-stars .star-full,\n.bg-root .bg-stars .star-half,\n.bg-root .bg-stars .star-empty {\n    display: inline-block;\n    line-height: 1;\n}\n\n.bg-root .bg-score-num {\n    margin-left: 4px;\n    font-size: 12px;\n    color: var(--bg-text);\n}\n","stats":"/* ---------- Блок статистики: месяц и инсайт ---------- */\n\n.bg-root .bg-stats {\n    display: grid;\n    grid-template-columns: 1fr 1fr;\n    gap: 16px;\n}\n\n.bg-root .bg-stat {\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n    padding: 20px;\n    min-width: 0;\n    border-radius: 16px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    box-shadow: var(--bg-shadow);\n}\n\n.bg-root .bg-stat-head {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 8px;\n}\n\n.bg-root .bg-eyebrow {\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    font-size: 12px;\n    letter-spacing: 0.08em;\n    text-transform: uppercase;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-eyebrow-ico {\n    display: inline-flex;\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-eyebrow-ico--amber {\n    color: var(--bg-star);\n}\n\n.bg-root .bg-stat-row {\n    display: flex;\n    align-items: flex-end;\n    justify-content: space-between;\n    gap: 12px;\n}\n\n.bg-root .bg-stat-main {\n    display: flex;\n    align-items: baseline;\n    gap: 8px;\n}\n\n.bg-root .bg-stat-num {\n    font-size: 36px;\n    line-height: 1;\n    font-weight: 700;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-stat-unit {\n    font-size: 16px;\n    font-weight: 600;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-stat-side {\n    font-size: 13px;\n    color: var(--bg-text-2);\n    text-align: right;\n}\n\n.bg-root .bg-stat-foot {\n    display: flex;\n    justify-content: space-between;\n    gap: 8px;\n    font-size: 12px;\n    color: var(--bg-text-3);\n}\n\n.bg-root .bg-pace b {\n    font-weight: 600;\n}\n\n.bg-root .bg-spark {\n    width: 100%;\n    height: 56px;\n    margin-top: auto;\n    color: var(--bg-accent);\n}\n\n/* Инсайт месяца */\n.bg-root .bg-insight-text {\n    margin: 8px 0 auto;\n    font-size: 16px;\n    font-style: italic;\n    line-height: 1.55;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-insight-link {\n    display: inline-flex;\n    align-items: center;\n    gap: 8px;\n    align-self: flex-start;\n    margin-top: 8px;\n    font-size: 13px;\n    color: var(--bg-accent) !important;\n    text-decoration: none !important;\n}\n\n.bg-root .bg-insight-link:hover {\n    text-decoration: underline !important;\n}\n\n/* ---------- «Пульс прочитанных за год» ---------- */\n.bg-root .bg-pulse {\n    display: flex;\n    flex-direction: column;\n    gap: 16px;\n    padding: 20px;\n    border-radius: 16px;\n    background: var(--bg-surface);\n    border: 1px solid var(--bg-border);\n    box-shadow: var(--bg-shadow);\n}\n\n.bg-root .bg-pulse-head {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 8px;\n}\n\n.bg-root .bg-year {\n    display: inline-flex;\n    align-items: center;\n    gap: 6px;\n    font-size: 14px;\n    font-weight: 600;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-year-btn {\n    display: inline-grid;\n    place-items: center;\n    width: 28px;\n    height: 28px;\n    border-radius: 8px;\n    color: var(--bg-text-2);\n    transition: background 0.15s, color 0.15s;\n}\n\n.bg-root .bg-year-btn:hover:not(:disabled) {\n    background: var(--bg-accent-soft);\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-year-btn:disabled {\n    opacity: 0.3;\n    cursor: default;\n}\n\n.bg-root .bg-pulse-body {\n    display: grid;\n    grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);\n    gap: 28px;\n    align-items: stretch;\n}\n\n.bg-root .bg-pulse-sum {\n    display: flex;\n    flex-direction: column;\n    justify-content: space-between;\n    gap: 16px;\n}\n\n.bg-root .bg-bars {\n    display: grid;\n    grid-template-columns: repeat(12, minmax(0, 1fr));\n    gap: 8px;\n    height: 170px;\n}\n\n.bg-root .bg-bar {\n    display: flex;\n    flex-direction: column;\n    align-items: center;\n    gap: 6px;\n    min-width: 0;\n    height: 100%;\n    border-radius: 8px;\n    cursor: pointer;\n}\n\n.bg-root .bg-bar-val {\n    height: 16px;\n    font-size: 11.5px;\n    line-height: 16px;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-bar-track {\n    position: relative;\n    flex: 1;\n    min-height: 0;\n    width: 100%;\n}\n\n.bg-root .bg-bar-fill {\n    position: absolute;\n    bottom: 0;\n    left: 50%;\n    width: min(100%, 30px);\n    min-height: 3px;\n    transform: translateX(-50%);\n    border-radius: 6px 6px 3px 3px;\n    background: var(--bg-accent-line);\n    transition: height 0.3s, background 0.15s, box-shadow 0.15s;\n}\n\n.bg-root .bg-bar.is-peak .bg-bar-fill {\n    background: linear-gradient(to top, var(--bg-accent-line), var(--bg-accent));\n}\n\n.bg-root .bg-bar:hover .bg-bar-fill {\n    background: var(--bg-accent);\n}\n\n.bg-root .bg-bar.is-empty .bg-bar-fill {\n    background: var(--bg-chip);\n}\n\n.bg-root .bg-bar.is-on .bg-bar-fill {\n    background: var(--bg-accent-bg);\n    box-shadow: 0 0 0 2px var(--bg-accent-line);\n}\n\n.bg-root .bg-bar-lbl {\n    font-size: 11px;\n    text-transform: uppercase;\n    color: var(--bg-text-3);\n}\n\n.bg-root .bg-bar.is-on .bg-bar-lbl,\n.bg-root .bg-bar:hover .bg-bar-lbl {\n    color: var(--bg-accent);\n}\n\n.bg-root .bg-pulse-hint {\n    font-size: 11px;\n    color: var(--bg-text-3);\n}\n\n/* ---------- План на год: линия плана в «Пульсе» ---------- */\n.bg-root .bg-bar-goal {\n    position: absolute;\n    left: 0;\n    right: 0;\n    height: 0;\n    border-top: 2px dashed var(--bg-star);\n    opacity: 0.8;\n    pointer-events: none;\n}\n\n/* ---------- Инфокарточки о прогрессе ---------- */\n.bg-root .bg-progress {\n    display: grid;\n    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));\n    gap: 16px;\n}\n\n.bg-root .bg-pcard {\n    justify-content: space-between;\n}\n\n.bg-root .bg-plan {\n    display: flex;\n    align-items: center;\n    gap: 18px;\n}\n\n.bg-root .bg-ring-wrap {\n    position: relative;\n    flex: none;\n    width: 92px;\n    height: 92px;\n}\n\n.bg-root .bg-ring {\n    width: 100%;\n    height: 100%;\n}\n\n.bg-root .bg-ring-bg,\n.bg-root .bg-ring-fg {\n    fill: none;\n    stroke-width: 9;\n}\n\n.bg-root .bg-ring-bg {\n    stroke: var(--bg-chip);\n}\n\n.bg-root .bg-ring-fg {\n    stroke: var(--bg-accent);\n    stroke-linecap: round;\n}\n\n.bg-root .bg-ring-num {\n    position: absolute;\n    inset: 0;\n    display: grid;\n    place-items: center;\n    font-size: 17px;\n    font-weight: 600;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-plan-text {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n    min-width: 0;\n}\n\n.bg-root .bg-plan-status {\n    font-size: 12.5px;\n}\n\n.bg-root .bg-pcard-hint {\n    font-size: 13.5px;\n    line-height: 1.5;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-pcard-hint code {\n    font-size: 12px;\n}\n\n.bg-root .bg-pcard--hint {\n    opacity: 0.85;\n}\n\n.bg-root .bg-progress-bar {\n    display: block;\n    flex: 1;\n    height: 8px;\n    min-width: 0;\n    border-radius: 4px;\n    background: var(--bg-chip);\n    overflow: hidden;\n}\n\n.bg-root .bg-pcard > .bg-progress-bar {\n    flex: none;\n    width: 100%;\n}\n\n.bg-root .bg-progress-bar > span {\n    display: block;\n    height: 100%;\n    border-radius: 4px;\n    background: var(--bg-accent);\n}\n\n.bg-root .bg-dots {\n    display: grid;\n    grid-template-columns: repeat(12, minmax(0, 1fr));\n    gap: 5px;\n}\n\n.bg-root .bg-dot-m {\n    display: block;\n    height: 10px;\n    border-radius: 3px;\n    background: var(--bg-chip);\n}\n\n.bg-root .bg-dot-m.is-on {\n    background: var(--bg-accent);\n}\n\n.bg-root .bg-dist {\n    display: flex;\n    flex-direction: column;\n    gap: 6px;\n}\n\n.bg-root .bg-dist-row {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n    width: 100%;\n    padding: 2px 4px;\n    border: 0;\n    border-radius: 6px;\n    background: transparent;\n    box-shadow: none;\n    cursor: pointer;\n    color: var(--bg-text-2);\n}\n\n.bg-root .bg-dist-row:hover {\n    background: var(--bg-chip);\n}\n\n.bg-root .bg-dist-k {\n    flex: none;\n    width: 28px;\n    font-size: 12px;\n    text-align: left;\n}\n\n.bg-root .bg-dist-n {\n    flex: none;\n    width: 22px;\n    font-size: 12px;\n    text-align: right;\n}\n\n.bg-root .bg-favs {\n    display: flex;\n    flex-direction: column;\n    gap: 10px;\n}\n\n.bg-root .bg-fav {\n    display: flex;\n    align-items: center;\n    gap: 12px;\n    width: 100%;\n    padding: 10px 12px;\n    border: 1px solid var(--bg-border);\n    border-radius: 10px;\n    background: var(--bg-surface-2);\n    box-shadow: none;\n    cursor: pointer;\n    text-align: left;\n    color: var(--bg-text);\n}\n\n.bg-root .bg-fav:hover {\n    border-color: var(--bg-accent-line);\n}\n\n.bg-root .bg-fav-ico {\n    flex: none;\n    color: var(--bg-accent);\n    font-size: 18px;\n}\n\n.bg-root .bg-fav-body {\n    display: flex;\n    flex-direction: column;\n    flex: 1;\n    min-width: 0;\n}\n\n.bg-root .bg-fav-name {\n    overflow: hidden;\n    white-space: nowrap;\n    text-overflow: ellipsis;\n    font-weight: 600;\n}\n\n.bg-root .bg-fav-n {\n    flex: none;\n    color: var(--bg-accent);\n}\n\n/* На узком экране карточки статистики листаются по горизонтали */\n@container (max-width: 640px) {\n    .bg-root .bg-stats {\n        grid-template-columns: none;\n        grid-auto-flow: column;\n        grid-auto-columns: 82%;\n        overflow-x: auto;\n        scroll-snap-type: x proximity;\n        padding-bottom: 4px;\n    }\n\n    .bg-root .bg-stat {\n        scroll-snap-align: start;\n        padding: 16px;\n    }\n\n    .bg-root .bg-stat-num {\n        font-size: 30px;\n    }\n\n    .bg-root .bg-pulse {\n        padding: 16px;\n    }\n\n    .bg-root .bg-pulse-body {\n        grid-template-columns: 1fr;\n        gap: 16px;\n    }\n\n    .bg-root .bg-bars {\n        height: 130px;\n        gap: 4px;\n    }\n}\n","theme":"/* ---------- Палитры ----------\n   Obsidian ставит на body класс theme-dark или theme-light.\n   Цвета взяты из макетов: тёмная — Material-серые с лаймовым акцентом,\n   светлая — slate с лаймовым акцентом. Меняйте только значения здесь. */\n\nbody.theme-dark .bg-root {\n    --bg-surface: #1b1b1e;          /* карточки, блоки статистики */\n    --bg-surface-2: #131316;        /* шапка и подвал панели, сегментный переключатель */\n    --bg-chip: #2a2a2d;             /* кнопки и теги */\n    --bg-input: #0e0e11;            /* поля ввода, выпадающие списки, неактивные теги */\n    --bg-hover: #353438;\n    --bg-border: rgba(66, 73, 54, 0.55);\n    --bg-text: #e4e1e6;\n    --bg-text-2: #c1cab0;           /* второстепенный текст */\n    --bg-text-3: #8b947d;           /* подсказки */\n    --bg-title: #9ee939;            /* заголовок страницы */\n    --bg-accent: #9ee939;           /* акцентный текст и иконки */\n    --bg-accent-bg: #9ee939;        /* заливка главной кнопки и активных чипов */\n    --bg-accent-ink: #1f3700;       /* текст на заливке */\n    --bg-accent-soft: rgba(158, 233, 57, 0.14);\n    --bg-accent-line: rgba(158, 233, 57, 0.4);\n    --bg-star: #ffb95f;\n    --bg-danger: #ffb4ab;\n    --bg-danger-soft: rgba(147, 0, 10, 0.4);\n    --bg-danger-line: rgba(255, 180, 171, 0.4);\n    --bg-badge: rgba(14, 14, 17, 0.82); /* плашка рейтинга и тега на обложке */\n    --bg-badge-text: #9ee939;\n    --bg-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;\n    --bg-glow: rgba(158, 233, 57, 0.1);\n}\n\nbody.theme-light .bg-root {\n    --bg-surface: #ffffff;\n    --bg-surface-2: #f8fafc;\n    --bg-chip: #f1f5f9;\n    --bg-input: #f1f5f9;\n    --bg-hover: #e2e8f0;\n    --bg-border: #e2e8f0;\n    --bg-text: #1e293b;\n    --bg-text-2: #475569;\n    --bg-text-3: #64748b;\n    --bg-title: #0f172a;\n    --bg-accent: #4d7c0f;\n    --bg-accent-bg: #84cc16;\n    --bg-accent-ink: #1a2e05;\n    --bg-accent-soft: #ecfccb;\n    --bg-accent-line: #bef264;\n    --bg-star: #f59e0b;\n    --bg-danger: #dc2626;\n    --bg-danger-soft: #fef2f2;\n    --bg-danger-line: #fecaca;\n    --bg-badge: rgba(255, 255, 255, 0.94);\n    --bg-badge-text: #334155;\n    --bg-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 24px -14px rgba(15, 23, 42, 0.18);\n    --bg-glow: rgba(132, 204, 22, 0.14);\n}\n"}};
+    // Вход в раздел через навигацию: ВСЕГДА чистое состояние (фильтры, режим, страница, черновик конструктора).
+    enterView(view) { store.set({ ...clean(), view }); if (ctx.scroll) ctx.scroll.toBlockTop(); },
+    // Переход с переносом состояния (подборка, тег, день…) — без сброса.
+    openPreset(preset, view = "stream") { store.set({ ...toState(preset), page: 1, presetId: preset.id || null, draft: null, view }); },
+    applyPreset(preset) { store.set({ ...toState(preset), page: 1, presetId: preset.id || null }); },
+    editPreset(preset) { store.set({ ...toState(preset), page: 1, presetId: preset.id, draft: draftOf(preset), view: "studio" }); },
+    newPreset() { store.set({ ...clean(), draft: newDraft(), view: "studio" }); },
+    // Клик по тегу в карточке: в Ленте/Бенто — переключить тег в фильтре; в других разделах — перейти в ленту с этим тегом.
+    tagClick(tag) {
+      const v = store.get().view;
+      if (v === "stream" || v === "bento") store.set({ filter: toggleTag(filter(), "any", tag), page: 1 });
+      else store.set({ ...clean(), filter: toggleTag(defaultFilter(), "any", tag), view: "stream" });
+    },
+    jumpToTag(tag) { store.set({ ...clean(), filter: toggleTag(defaultFilter(), "any", tag), view: "stream" }); },
+    // Клик по типу в диаграмме обзора: в фильтрах остались только атрибуты — ставим соответствующий атрибут (иначе, для «текста» и canvas, — тип)
+    jumpToType(type) {
+      const attr = { image: "photo", video: "video", audio: "audio", quote: "quote", tasks: "task", link: "link" }[type];
+      store.set({ ...clean(), filter: merge(null, attr ? { attrs: [attr] } : { types: [type] }), view: "stream" });
+    },
+    jumpToDay(day) { store.set({ ...clean(), filter: merge(null, { day }), view: "stream" }); },
+  };
+};
 
-const REFRESH_DELAY = 2500; // мс тишины после правки заметок перед тихим обновлением галерей
+},
+"app/main": function (module, exports, require) {
+// app/main.js — композиция. Два уровня:
+//  • createCore(plugin) — один раз на плагин: хранилище, общая база данных (data.json), CSS;
+//  • mount(core, opts)   — на каждый вид (вкладка / code-block): настройки → сессия → состояние → контекст → оболочка.
+const createStorage = require("services/storage");
+const createDb = require("services/db");
+const { DEFAULTS } = require("services/config");
+const { DEFAULT_PRESETS, createPresets } = require("services/presets");
+const loadCss = require("services/css-loader");
+const createMarkdown = require("services/md");
+const createMedia = require("services/media");
+const createContent = require("services/content");
+const createFlags = require("services/flags");
+const createPostsRepo = require("services/posts");
+const createSession = require("services/session");
+const createIndexer = require("services/indexer");
+const createScroll = require("services/scroll");
+const createChangelog = require("services/changelog");
+const createNewNote = require("services/new-note");
+const createNotePopup = require("ui/common/note-popup");
+const { Notice } = require("obsidian");
+const createAppState = require("app/state");
+const createActions = require("app/actions");
+const createOpenNote = require("app/open-note");
+const { mountShell } = require("app/shell");
+const { VERSION } = require("app/version");
 
-/**
- * Один экземпляр галереи: элемент на странице + параметры блока. Умеет перерисовываться,
- * сохраняя фильтры, и аккуратно убирает за собой.
- */
-class Host {
-    constructor(plugin, el, params) {
-        this.plugin = plugin;
-        this.el = el;
-        this.params = params || {};
-        this.keep = {};       // фильтры, вид, год «Пульса» — переживают перерисовку
-        this.cleanups = [];
-        this.cfg = null;
-        this.stale = false;   // данные устарели, а блок сейчас не виден
-        this.destroyed = false;
-        this.rendering = false;
-    }
-
-    attach(component) {
-        component.register(() => this.destroy());
-        this.plugin.hosts.add(this);
-    }
-
-    runCleanups() {
-        const list = this.cleanups;
-        this.cleanups = [];
-        list.forEach((fn) => {
-            try { fn(); } catch (e) { console.warn("book-gallery: cleanup", e); }
-        });
-    }
-
-    isVisible() {
-        return this.el.isConnected && this.el.offsetParent !== null;
-    }
-
-    async render(silent) {
-        if (this.destroyed || this.rendering) return;
-        this.rendering = true;
-        try {
-            this.runCleanups();
-            const scope = { register: (fn) => this.cleanups.push(fn) };
-            const ctx = this.plugin.instantiate(this.params, scope);
-            this.cfg = ctx.cfg;
-            this.stale = false;
-            await ctx.lib.app.run(this.el, {
-                keep: this.keep,
-                silent: !!silent,
-                onCleanup: (fn) => this.cleanups.push(fn),
-            });
-        } catch (e) {
-            console.error("book-gallery:", e);
-            this.el.empty();
-            this.el.createDiv({ text: "book-gallery: " + (e && e.message ? e.message : e) }).style.cssText =
-                "color:#d9534f;white-space:pre-wrap;";
-        } finally {
-            this.rendering = false;
-        }
-    }
-
-    destroy() {
-        this.destroyed = true;
-        this.runCleanups();
-        this.plugin.hosts.delete(this);
-    }
+async function createCore(plugin) {
+  const storage = createStorage(plugin);
+  const db = await createDb(storage, { settings: DEFAULTS, presets: DEFAULT_PRESETS });
+  await loadCss(storage);
+  return { plugin, app: plugin.app, storage, db, instances: new Set(), defaults: DEFAULTS };
 }
 
-module.exports = class BookGalleryPlugin extends Plugin {
-    async onload() {
-        this.hosts = new Set();
-        this.compiled = {};
-        this.settings = Object.assign({}, await this.loadData());
-        this.dirty = true;       // до первого индексирования метаданных данные могут быть неполными
-        this.refreshTimer = null;
+// opts: { container, input, sourcePath, component, boot }
+async function mount(core, { container, input = {}, sourcePath = "", component = {}, boot = null }) {
+  const { app, storage, db } = core;
+  const config = JSON.parse(JSON.stringify(db.data.settings)); // копия: параметры вызова не пишутся обратно в данные
+  if (input.nav === false) config.nav = false;
 
-        try {
-            await this.compileAll();
-        } catch (e) {
-            console.error("book-gallery:", e);
-            new Notice("Book Gallery: " + (e && e.message ? e.message : e), 10000);
-            return;
-        }
+  // Ключ сессии: место, где живёт вид (заметка / вкладка) + id блока. Позволяет вернуться на то же место после перехода в заметку.
+  const key = (sourcePath || "journal-stream") + "::" + (input.id || "default");
+  const session = createSession(key);
+  const { store, restored } = createAppState({ db, config, input, session });
 
-        this.defaults = this.runModule("config", { obsidian }).defaults;
-        await this.injectStyles();
+  const disposers = [];
+  const ctx = { app, plugin: core.plugin, component, sourcePath, input, config, storage, db, session, store, restored, boot, destroyed: false };
+  ctx.onDispose = (fn) => { disposers.push(fn); };
+  ctx.flags = createFlags({ db });
+  ctx.presets = createPresets({ db });
+  ctx.md = createMarkdown({ app, component });
+  ctx.media = createMedia(app);
+  ctx.content = createContent({ app, config });
+  ctx.repo = createPostsRepo({ app, config });
+  const popup = createNotePopup(ctx);
+  ctx.openPreview = (link, source) => popup.open(link, source);
+  ctx.closePreview = popup.close;
+  Object.assign(ctx, createOpenNote(ctx));
+  ctx.scrollKey = key;
+  ctx.scroll = createScroll({ session, key, log: config.debug ? (...a) => console.log("[journal-stream:scroll]", ...a) : undefined });
+  ctx.onDispose(() => ctx.scroll.destroy());
+  ctx.actions = createActions(ctx);
+  ctx.indexer = createIndexer(ctx);
+  const makeNote = createNewNote(ctx);
+  ctx.createNote = async () => { try { await makeNote(); } catch (e) { console.error("[journal-stream] новая заметка", e); new Notice("Journal Stream: не удалось создать заметку — " + (e && e.message ? e.message : e)); } };
+  ctx.openChangelog = createChangelog({ app, storage, md: ctx.md, component });
 
-        const { BookGallerySettingTab } = this.runModule("settings", { obsidian, plugin: this });
-        const { BookGalleryView } = this.runModule("view", { obsidian, plugin: this });
+  const inst = {
+    ctx,
+    // Изменились заметки vault: следующий рендер перечитает список (без лишней работы на каждое событие)
+    markDirty() { ctx.repo.markDirty(); },
+    destroy() {
+      if (ctx.destroyed) return;
+      ctx.destroyed = true;
+      for (const fn of disposers.splice(0).reverse()) { try { fn(); } catch (e) { console.warn("[journal-stream] dispose", e); } }
+      db.flush();
+      core.instances.delete(inst);
+    },
+  };
+  core.instances.add(inst);
+  await mountShell(ctx, container);
 
-        this.addSettingTab(new BookGallerySettingTab(this.app, this));
+  // Версия, которой записаны данные: после обновления плагина показываем одно уведомление со ссылкой на историю версий.
+  const prev = db.data.appVersion;
+  if (prev !== VERSION) {
+    db.data.appVersion = VERSION; db.save();
+    if (!db.fresh) ctx.toast(`Journal Stream обновлён${prev ? `: v${prev} → v${VERSION}` : ` до v${VERSION}`}. Что нового — по ссылке v${VERSION} в навигации`);
+  }
+  return inst;
+}
+module.exports = { createCore, mount };
 
-        // блок кода ```book-gallery
-        this.registerMarkdownCodeBlockProcessor(CODE_BLOCK, (source, el, mdCtx) => {
-            let params = {};
-            try {
-                params = parseYaml(source) || {};
-                if (typeof params !== "object" || Array.isArray(params)) throw new Error("параметры должны быть в формате «ключ: значение»");
-            } catch (e) {
-                el.createDiv({ text: "book-gallery: ошибка в параметрах блока — " + (e && e.message ? e.message : e) }).style.cssText =
-                    "color:#d9534f;white-space:pre-wrap;";
-                return;
-            }
-            const child = new MarkdownRenderChild(el);
-            mdCtx.addChild(child);
-            const host = this.createHost(el.createDiv(), params, child);
-            host.render();
-        });
-
-        // отдельная вкладка
-        this.registerView(VIEW_TYPE, (leaf) => new BookGalleryView(leaf));
-        this.addRibbonIcon("book-open", "Каталог книг", () => this.openView());
-        this.addCommand({ id: "open-book-gallery", name: "Открыть каталог книг", callback: () => this.openView() });
-        this.addCommand({
-            id: "insert-book-gallery",
-            name: "Вставить блок каталога книг в заметку",
-            editorCallback: (editor) => editor.replaceSelection("```" + CODE_BLOCK + "\nfolder: " + (this.settings.folder || this.defaults.folder) + "\n```\n"),
-        });
-        this.addCommand({ id: "refresh-book-gallery", name: "Обновить каталоги книг", callback: () => this.refreshAll(true) });
-
-        // автообновление: правка книг и заметок-цитат, переименование, удаление
-        const { metadataCache, vault, workspace } = this.app;
-        this.registerEvent(metadataCache.on("changed", (file) => { if (this.isRelevant(file)) this.dirty = true; }));
-        this.registerEvent(metadataCache.on("resolved", () => {
-            if (!this.dirty) return;
-            this.dirty = false;
-            this.scheduleRefresh();
-        }));
-        const touch = () => { this.dirty = true; this.scheduleRefresh(); };
-        this.registerEvent(vault.on("delete", touch));
-        this.registerEvent(vault.on("rename", touch));
-        // скрытые галереи обновляются, когда их снова открывают
-        this.registerEvent(workspace.on("active-leaf-change", () => this.refreshStale()));
-    }
-
-    onunload() {
-        clearTimeout(this.refreshTimer);
-        [...this.hosts].forEach((h) => h.destroy());
-        const style = document.getElementById(STYLE_ID);
-        if (style) style.remove();
-        this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-    }
-
-    // ---------- модули ----------
-    get dir() {
-        return this.manifest.dir;
-    }
-
-    async compileAll() {
-        const names = [...MODULES, ...PLUGIN_MODULES];
-        const adapter = this.app.vault.adapter;
-        if (EMBEDDED) {
-            names.forEach((name) => {
-                this.compiled[name] = new Function("ctx", "module", "exports", EMBEDDED.src[name] + `\n//# sourceURL=book-gallery/src/${name}.js`);
-            });
-            return;
-        }
-        const sources = await Promise.all(
-            names.map((name) =>
-                adapter.read(`${this.dir}/src/${name}.js`).catch((e) => {
-                    const err = new Error(`${this.dir}/src/${name}.js (${e && e.message ? e.message : e})`);
-                    err.missing = true;
-                    throw err;
-                })
-            )
-        ).catch(async (e) => {
-            // подсказка: что реально лежит в папке плагина
-            let listing = "";
-            try {
-                const l = await adapter.list(this.dir);
-                listing = `\nВ папке плагина: файлы [${l.files.map((f) => f.split("/").pop()).join(", ")}], папки [${l.folders.map((f) => f.split("/").pop()).join(", ")}]`;
-            } catch (e2) { /* без подсказки */ }
-            throw new Error(`не удалось прочитать модуль: ${e.message}.${listing}\nПапка src должна лежать рядом с main.js.`);
-        });
-        names.forEach((name, i) => {
-            this.compiled[name] = new Function("ctx", "module", "exports", sources[i] + `\n//# sourceURL=book-gallery/src/${name}.js`);
-        });
-    }
-
-    runModule(name, ctx) {
-        const module = { exports: {} };
-        this.compiled[name](ctx, module, module.exports);
-        return module.exports;
-    }
-
-    // Свежий набор модулей для одной галереи: у каждой свои настройки и состояние
-    instantiate(params, component) {
-        const ctx = { app: this.app, obsidian, plugin: this, component, lib: {}, cfg: null };
-        for (const name of MODULES) {
-            ctx.lib[name] = this.runModule(name, ctx);
-            // настройки нужны всем остальным модулям, поэтому собираем их сразу после config
-            if (name === "config") ctx.cfg = ctx.lib.config.build(this.settings, params);
-        }
-        return ctx;
-    }
-
-    createHost(el, params, component) {
-        const host = new Host(this, el, params);
-        host.attach(component);
-        return host;
-    }
-
-    // ---------- стили ----------
-    async injectStyles() {
-        const files = this.defaults.cssFiles;
-        const texts = EMBEDDED
-            ? files.map((name) => (EMBEDDED.styles[name] !== undefined ? EMBEDDED.styles[name] : null))
-            : await Promise.all(files.map((name) => this.app.vault.adapter.read(`${this.dir}/styles/${name}.css`).catch(() => null)));
-        const missing = files.filter((_, i) => texts[i] === null);
-        if (missing.length) new Notice(`Book Gallery: не найдены стили: ${missing.map((m) => m + ".css").join(", ")}`, 8000);
-        let style = document.getElementById(STYLE_ID);
-        if (!style) {
-            style = document.createElement("style");
-            style.id = STYLE_ID;
-            document.head.appendChild(style);
-        }
-        style.textContent = texts.map((t) => t || "").join("\n");
-    }
-
-    // ---------- вкладка ----------
-    async openView() {
-        const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
-        const leaf = existing || this.app.workspace.getLeaf("tab");
-        if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });
-        this.app.workspace.revealLeaf(leaf);
-    }
-
-    // ---------- настройки и обновление ----------
-    async saveSettings() {
-        await this.saveData(this.settings);
-        this.dirty = true;
-        this.scheduleRefresh(); // с задержкой: настройка может вводиться по буквам
-    }
-
-    // Относится ли изменённая заметка к какой-нибудь из открытых галерей
-    isRelevant(file) {
-        if (!file || file.extension !== "md" || !this.hosts.size) return false;
-        const cache = this.app.metadataCache.getFileCache(file);
-        for (const host of this.hosts) {
-            const cfg = host.cfg;
-            if (!cfg) continue;
-            const folder = String(cfg.folder || "").trim().replace(/^\/+|\/+$/g, "");
-            if (!folder || file.path.startsWith(folder + "/")) return true;
-            if (cache && cache.frontmatter && cache.frontmatter[cfg.sourceField]) return true;
-        }
-        return false;
-    }
-
-    scheduleRefresh() {
-        clearTimeout(this.refreshTimer);
-        this.refreshTimer = setTimeout(() => this.refreshAll(false), REFRESH_DELAY);
-    }
-
-    // force — перерисовать сразу все, иначе только видимые (остальные получат метку «устарело»)
-    refreshAll(force) {
-        for (const host of this.hosts) {
-            if (force || host.isVisible()) host.render(!force);
-            else host.stale = true;
-        }
-    }
-
-    refreshStale() {
-        for (const host of this.hosts) if (host.stale && host.isVisible()) host.render(true);
-    }
+},
+"app/open-note": function (module, exports, require) {
+// app/open-note.js — открытие заметок из виджета.
+// Вкладка: настройка openInNewTab (кнопка в навигации) или Ctrl/Cmd/средняя кнопка — всегда в новой.
+// Если заметка открывается в этой же вкладке — фиксируем прокрутку и снимаем «полную ширину» со страницы (для code-block),
+// чтобы открытая заметка отображалась с обычными отступами.
+module.exports = function createOpenNote(ctx) {
+  const wantsNewTab = (evt) => !!(ctx.store.get().openInNewTab || (evt && (evt.ctrlKey || evt.metaKey || evt.button === 1)));
+  // Режим «плавающее окно»: клик по карточке показывает заметку в окне просмотра. Ctrl/Cmd/средняя кнопка — как обычно, в редакторе.
+  const wantsPopup = (evt) => !!(ctx.store.get().popupView && ctx.openPreview && !(evt && (evt.ctrlKey || evt.metaKey || evt.button === 1)));
+  const open = (linktext, source, evt) => {
+    if (wantsPopup(evt)) return ctx.openPreview(linktext, source);
+    const newTab = wantsNewTab(evt);
+    if (!newTab && ctx.leavePage) ctx.leavePage();
+    return ctx.app.workspace.openLinkText(linktext, source || "", newTab);
+  };
+  return { openNote: (path, evt) => open(path, "", evt), openLink: (link, source, evt) => open(link, source, evt) };
 };
+
+},
+"app/shell": function (module, exports, require) {
+// app/shell.js — корневой контейнер: тема, ширина, навигация, переключение экранов, восстановление прокрутки.
+const { h, clear } = require("lib/dom");
+const nav = require("ui/common/nav");
+const scrollTopButton = require("ui/common/scroll-top");
+const versionBadge = require("ui/common/version-badge");
+const skeletonGrid = require("ui/common/skeleton");
+const watchObsidianTheme = require("services/theme-watch");
+const views = require("views");
+
+async function mountShell(ctx, container) {
+  const { store, config } = ctx;
+  let dispose = null, token = 0;
+  const root = h("div", { class: "sf-root", dataset: { sfTheme: store.get().theme, sfView: store.get().view } });
+  const region = h("div", { class: "sf-view" });
+  container.appendChild(root);
+  ctx.rootEl = root;
+  ctx.scroll.setRoot(root);
+
+  // Размер блока → классы: is-compact (< 900px), is-mobile (< singleColumnBelow, по умолчанию 560px — один столбец).
+  // Считаем по ширине самого блока, а не окна: так работает и в узкой боковой панели.
+  // Принудительный вид (кнопки в навигации): mobile — как на телефоне (один столбец, узкая «рамка»), desktop — как на компьютере
+  // даже на узком экране (колонки по config.columns, блок не уже 760px). auto — по ширине блока.
+  const baseSingle = config.singleColumnBelow ?? 560;
+  const sizeOf = () => root.clientWidth || container.clientWidth || 0;
+  function applySize() {
+    const mode = store.get().viewMode || "auto", w = sizeOf();
+    const mobile = mode === "mobile" ? true : mode === "desktop" ? false : w > 0 && w < baseSingle;
+    const compact = mode === "mobile" ? true : mode === "desktop" ? false : w > 0 && w < 900;
+    config.singleColumnBelow = mode === "mobile" ? 100000 : mode === "desktop" ? 0 : baseSingle; // читает раскладка плиток
+    root.classList.toggle("is-compact", compact);
+    root.classList.toggle("is-mobile", mobile);
+    root.classList.toggle("is-forced-mobile", mode === "mobile");
+    root.classList.toggle("is-forced-desktop", mode === "desktop");
+    return mobile;
+  }
+  let wasMobile = applySize();
+
+  // Возврат на страницу: позицию читаем ДО построения интерфейса, высоту резервируем, сохранение позиции приостанавливаем.
+  const s0 = ctx.restored ? ctx.session.get() : null;
+  const targetScroll = (s0 && s0.scroll) || 0;
+  if (targetScroll) {
+    if (s0.height) root.style.minHeight = s0.height + "px";
+    ctx.scroll.hold();
+  }
+  root.append(...(config.nav ? [nav(ctx)] : []), region, ...(config.nav ? [] : [h("div", { class: "sf-footer" }, "Journal Stream ", versionBadge(ctx))]));
+  scrollTopButton(ctx); // самостоятельная fixed-кнопка в <body>
+
+  // Область заметки (в ней живёт «полная ширина»). Класс снимается при уходе со страницы.
+  const host = container.closest ? container.closest(".markdown-preview-view, .markdown-source-view, .view-content") : null;
+  const setHostFull = (on) => { if (host) host.classList.toggle("sf-page-full", !!on); };
+  function applyLook() {
+    const s = store.get();
+    root.classList.toggle("is-full", !!s.fullWidth);
+    root.dataset.sfTheme = s.theme;
+    setHostFull(s.fullWidth);
+  }
+  applyLook();
+  store.subscribe(applyLook, ["fullWidth", "theme"]);
+  ctx.onDispose(watchObsidianTheme(ctx));
+  store.subscribe(() => { wasMobile = applySize(); if (ctx.refreshNav) ctx.refreshNav(); show(); }, ["viewMode"]);
+
+  // Obsidian переиспользует контейнер заметки при навигации: если виджет исчез (ушли в другую заметку любым способом) —
+  // снимаем с контейнера класс полной ширины, чтобы новая заметка отображалась как обычно.
+  ctx.leavePage = () => { ctx.scroll.leave(); setHostFull(false); };
+  if (host && typeof setInterval === "function") {
+    const timer = setInterval(() => { if (root.isConnected === false) { setHostFull(false); clearInterval(timer); } }, 800);
+    ctx.onDispose(() => clearInterval(timer));
+  }
+  ctx.onDispose(() => setHostFull(false));
+
+  if (typeof ResizeObserver !== "undefined") {
+    let t = null;
+    const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (ctx.destroyed) return; const m = applySize(); if (m !== wasMobile) { wasMobile = m; if (ctx.refreshNav) ctx.refreshNav(); show(); } }, 120); });
+    ro.observe(root);
+    ctx.onDispose(() => { clearTimeout(t); ro.disconnect(); });
+  }
+  ctx.onDispose(() => { token++; if (dispose) { try { dispose(); } catch (e) {} dispose = null; } root.remove(); });
+  async function show() {
+    const my = ++token;
+    if (dispose) { try { dispose(); } catch (e) {} dispose = null; }
+    clear(region);
+    const view = views.get(store.get().view);
+    root.dataset.sfView = view.id;
+    // Пока экран строится — шиммеры карточек; стартовую заглушку из view.js убираем, как только появились эти
+    region.append(skeletonGrid(ctx, { count: 6 }));
+    if (ctx.boot && ctx.boot.remove) { ctx.boot.remove(); ctx.boot = null; }
+    await new Promise((r) => setTimeout(r, 0)); // отдать кадр браузеру, чтобы шиммеры успели отрисоваться до тяжёлой работы
+    if (my !== token || ctx.destroyed) return;
+    clear(region);
+    try {
+      const d = await view.render(ctx, region);
+      if (my === token) dispose = d; else if (d) d();
+    } catch (e) {
+      console.error(e);
+      region.append(h("pre", { class: "sf-error" }, `[journal-stream] ошибка экрана «${view.id}»:\n${e && e.stack ? e.stack : e}`));
+    }
+  }
+  ctx.reload = show;
+  ctx.toast = (text) => { const t = h("div", { class: "sf-toast" }, text); root.append(t); setTimeout(() => t.remove(), 2200); };
+  store.subscribe(show, ["view", "popupView"]); // смена режима окна перерисовывает карточки (бэклинки скрываются)
+  await show();
+  // Вернулись на страницу — возвращаем прокрутку (карточки дорисовываются, поэтому восстановление с повторами).
+  if (targetScroll) ctx.scroll.restore(targetScroll, () => { root.style.minHeight = ""; });
+}
+module.exports = { mountShell };
+
+},
+"app/state": function (module, exports, require) {
+// app/state.js — реактивное состояние экрана.
+// • Между перерисовками блока (переход в другую заметку и назад) состояние берётся из session — в памяти.
+// • Предпочтения UI (раскладка, полная ширина) сохраняются в едином файле данных.
+const { createStore } = require("lib/store");
+const { newSeed } = require("lib/random");
+const { merge } = require("filters/state");
+
+const normLayout = (l) => (l === "timeline" || l === "masonry" ? l : l === "flow" ? "timeline" : "masonry");
+
+module.exports = function createAppState({ db, config, input, session }) {
+  const ui = db.data.ui || {};
+  const saved = session.get() && session.get().state;
+  const fresh = {
+    view: input.view || config.defaultView,
+    layout: normLayout(input.layout || ui.layout || config.layout),
+    fullWidth: !!(input.fullWidth ?? ui.fullWidth ?? config.fullWidth),
+    openInNewTab: !!(input.openInNewTab ?? ui.openInNewTab ?? config.openInNewTab),
+    popupView: !!(input.popupView ?? ui.popupView ?? config.popupView),
+    theme: input.theme || ui.theme || config.theme,
+    viewMode: input.viewMode || ui.viewMode || "auto",   // auto | mobile | desktop — принудительный вид
+    insightsCount: Number(input.insightsCount ?? ui.insightsCount ?? config.insightsCount) || 3,
+    quick: "all", filter: merge(input.filter), seed: newSeed(), page: 1, collapsed: null, presetId: null, draft: null,
+  };
+  const store = createStore(saved ? { ...fresh, ...saved, layout: normLayout(saved.layout) } : fresh);
+  const restored = !!saved;
+
+  store.subscribe((s) => session.patch({ state: s }));
+  store.subscribe((s) => { db.data.ui = { ...db.data.ui, layout: s.layout, fullWidth: s.fullWidth, openInNewTab: s.openInNewTab, popupView: s.popupView, theme: s.theme, insightsCount: s.insightsCount, viewMode: s.viewMode }; db.save(); }, ["layout", "fullWidth", "openInNewTab", "popupView", "theme", "insightsCount", "viewMode"]);
+  session.patch({ state: store.get() });
+  return { store, restored };
+};
+
+},
+"app/version": function (module, exports, require) {
+// app/version.js — ЕДИНСТВЕННЫЙ источник версии кода. При выпуске: поднять VERSION здесь и в manifest.json и добавить запись
+// в README → «История версий» (тест tests/run.js проверяет, что версии совпадают и запись есть).
+module.exports = {
+  VERSION: "2.2.1",
+  RELEASED: "2026-10-27",
+};
+
+},
+"filters/attrs": function (module, exports, require) {
+// filters/attrs.js — атрибуты-переключатели («С медиа», «Цитаты», «Задачи» …).
+const ATTRS = [
+  { id: "media", label: "С медиа", icon: "image" },
+  { id: "photo", label: "С фото", icon: "image" },
+  { id: "video", label: "Видеозаписи", icon: "video" },
+  { id: "audio", label: "Аудио", icon: "mic" },
+  { id: "quote", label: "Цитаты", icon: "quote" },
+  { id: "task", label: "Задачи", icon: "tasks" },
+  { id: "link", label: "Со ссылками", icon: "link" },
+];
+const label = (id) => (ATTRS.find((a) => a.id === id) || { label: id }).label;
+module.exports = { ATTRS, label };
+
+},
+"filters/dql": function (module, exports, require) {
+// filters/dql.js — компиляция состояния фильтра в Dataview DQL (TABLE).
+const { dqlEscape } = require("lib/text");
+const { byId: periods } = require("filters/periods");
+const { merge } = require("filters/state");
+const { toMs, DAY } = require("lib/date");
+
+const EXT = { photo: "png|jpe?g|gif|webp|svg|avif", video: "mp4|mov|mkv|webm|m4v", audio: "mp3|wav|m4a|ogg|flac|aac", media: "png|jpe?g|gif|webp|svg|avif|mp4|mov|mkv|webm|m4v|mp3|wav|m4a|ogg|flac|aac" };
+const outlinkMedia = (ext) => `length(filter(file.outlinks, (l) => regexmatch("(?i).*\\\\.(${ext})$", string(l.path)))) > 0`;
+const tag = (t) => `contains(file.tags, "#${dqlEscape(t)}")`;
+
+function compile(filter, opts = {}) {
+  const f = merge(filter), cfg = opts.config || {}, notes = [];
+  const dateExpr = (cfg.dql && cfg.dql.dateExpr) || "file.cday";
+  const folders = f.sources.length
+    ? (cfg.sources || []).filter((s) => f.sources.includes(s.id)).map((s) => s.folder)
+    : (cfg.sources || []).filter((s) => s.enabled !== false && s.folder).map((s) => s.folder);
+  const where = [];
+
+  if (f.any.length) where.push("(" + f.any.map(tag).join(" OR ") + ")");
+  for (const t of f.all) where.push(tag(t));
+  for (const t of f.not) where.push("!" + tag(t));
+  for (const a of f.attrs) {
+    if (EXT[a]) where.push("(" + outlinkMedia(EXT[a]) + ")");
+    else if (a === "task") where.push("length(file.tasks) > 0");
+    else { where.push(`contains(file.tags, "#${a === "quote" ? "цитата" : a}")`); notes.push(`Атрибут «${a}» в DQL приблизительный (по тегу): точное определение делает движок ленты.`); }
+  }
+  if (f.types.length) notes.push("Типы карточек определяются движком ленты и в DQL не выражаются.");
+  const p = periods[f.period];
+  if (p && p.days) where.push(`${dateExpr} >= date(today) - dur(${p.days} days)`);
+  const nextDay = (s) => { const d = new Date(toMs(s) + DAY); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+  if (f.dateFrom && toMs(f.dateFrom) != null) where.push(`${dateExpr} >= date("${f.dateFrom}")`);
+  if (f.dateTo && toMs(f.dateTo) != null) where.push(`${dateExpr} < date("${nextDay(f.dateTo)}")`);
+  if (f.day) where.push(`${dateExpr} = date("${f.day}")`);
+  if (f.minBacklinks > 0) where.push(`length(file.inlinks) >= ${f.minBacklinks}`);
+  if (f.text.trim()) where.push(`contains(lower(file.name), "${dqlEscape(f.text.trim().toLowerCase())}")`);
+  if (opts.quick === "today") where.push(`dateformat(${dateExpr}, "MM-dd") = dateformat(date(today), "MM-dd")`);
+  if (opts.quick === "favorites") where.push(`${cfg.favoriteField || "favorite"} = true`);
+  if (opts.quick === "random") notes.push("«Рандомные» — перемешивание выполняет движок ленты (DQL не умеет random).");
+
+  const sort = { "date-desc": `${dateExpr} DESC`, "date-asc": `${dateExpr} ASC`, "mtime-desc": "file.mtime DESC", "backlinks-desc": "length(file.inlinks) DESC", "length-desc": "file.size DESC", "alpha-asc": "file.name ASC" }[f.sort] || `${dateExpr} DESC`;
+  const lines = [`TABLE WITHOUT ID file.link AS "Заметка", ${dateExpr} AS "Дата", length(file.inlinks) AS "Связи"`];
+  if (folders.length) lines.push("FROM " + folders.map((x) => `"${dqlEscape(x)}"`).join(" OR "));
+  if (where.length) lines.push("WHERE " + where.join("\n  AND "));
+  lines.push("SORT " + sort);
+  return { query: lines.join("\n"), notes };
+}
+module.exports = { compile };
+
+},
+"filters/engine": function (module, exports, require) {
+// filters/engine.js — применение фильтра к списку постов.
+const { predicates } = require("filters/predicates");
+const { merge } = require("filters/state");
+const { get: sorter } = require("filters/sorters");
+
+function matches(post, filter, now) {
+  for (const key of Object.keys(predicates)) if (!predicates[key](post, filter, now)) return false;
+  return true;
+}
+function applyFilter(posts, filter, now = Date.now()) {
+  const f = merge(filter);
+  return posts.filter((p) => matches(p, f, now));
+}
+function sortPosts(posts, key) { return posts.slice().sort(sorter(key)); }
+module.exports = { matches, applyFilter, sortPosts };
+
+},
+"filters/formula": function (module, exports, require) {
+// filters/formula.js — человекочитаемая формула фильтра. Показывает ВСЕ активные условия
+// (теги, атрибуты, тип, источник, период, связи, день, текст) — скрытых условий не бывает.
+const { label } = require("filters/attrs");
+const { byId: periods } = require("filters/periods");
+
+function toTokens(f) {
+  const groups = [];
+  if (f.any.length) groups.push({ mode: "any", op: "OR", tags: f.any });
+  if (f.all.length) groups.push({ mode: "all", op: "AND", tags: f.all });
+  const out = [];
+  const sep = () => { if (out.length) out.push({ t: "op", v: "AND" }); };
+  for (const g of groups) {
+    sep(); out.push({ t: "paren", v: "(" });
+    g.tags.forEach((tag, i) => { if (i) out.push({ t: "op", v: g.op }); out.push({ t: "tag", v: "#" + tag, tag, mode: g.mode }); });
+    out.push({ t: "paren", v: ")" });
+  }
+  if (f.not.length) {
+    sep(); out.push({ t: "op", v: "NOT", neg: true }, { t: "paren", v: "(" });
+    f.not.forEach((tag, i) => { if (i) out.push({ t: "op", v: "OR" }); out.push({ t: "tag", v: "!#" + tag, tag, mode: "not" }); });
+    out.push({ t: "paren", v: ")" });
+  }
+  for (const a of f.attrs) { sep(); out.push({ t: "attr", v: label(a), attr: a }); }
+  // прочие условия — отдельными удаляемыми чипами
+  const cond = (v, key, item) => { sep(); out.push({ t: "cond", v, key, item }); };
+  for (const t of f.types) cond("тип: " + t, "types", t);
+  for (const s of f.sources) cond("источник: " + s, "sources", s);
+  if (f.period && f.period !== "all") cond("период: " + (periods[f.period] ? periods[f.period].label.toLowerCase() : f.period), "period");
+  if (f.minBacklinks > 0) cond("связи ≥ " + f.minBacklinks, "minBacklinks");
+  if (f.dateFrom) cond("с " + f.dateFrom, "dateFrom");
+  if (f.dateTo) cond("по " + f.dateTo, "dateTo");
+  if (f.day) cond("день: " + f.day, "day");
+  if ((f.text || "").trim()) cond("поиск: «" + f.text.trim() + "»", "text");
+  return out;
+}
+const toString = (f) => toTokens(f).map((t) => t.v).join(" ");
+module.exports = { toTokens, toString };
+
+},
+"filters/periods": function (module, exports, require) {
+// filters/periods.js — относительные периоды для фильтра.
+const DAY = 86400000;
+const PERIODS = [
+  { id: "all", label: "Весь архив", days: null },
+  { id: "7d", label: "За 7 дней", days: 7 },
+  { id: "14d", label: "За 14 дней", days: 14 },
+  { id: "30d", label: "За 30 дней", days: 30 },
+  { id: "3m", label: "За 3 месяца", days: 90 },
+  { id: "1y", label: "За год", days: 365 },
+];
+const byId = Object.fromEntries(PERIODS.map((p) => [p.id, p]));
+const inPeriod = (ts, period, now) => { const p = byId[period]; return !p || !p.days || ts >= now - p.days * DAY; };
+module.exports = { PERIODS, byId, inPeriod };
+
+},
+"filters/pipeline": function (module, exports, require) {
+// filters/pipeline.js — полный путь: все посты → фильтр → быстрый режим → сортировка/закрепы.
+const { applyFilter, sortPosts } = require("filters/engine");
+const { applyQuick } = require("filters/quick-modes");
+
+function run(posts, state, env) {
+  const c = { now: env.now || Date.now(), seed: state.seed, config: env.config, flags: env.flags };
+  const filtered = applyFilter(posts, state.filter, c.now);
+  let list = applyQuick(filtered, state.quick, c);
+  list = sortPosts(list, state.quick === "random" ? "date-desc" : state.filter.sort);
+  const pinned = list.filter((p) => env.flags.isPinned(p));
+  return { filtered, list: pinned.length ? [...pinned, ...list.filter((p) => !env.flags.isPinned(p))] : list };
+}
+module.exports = { run };
+
+},
+"filters/predicates": function (module, exports, require) {
+// filters/predicates.js — отдельные условия фильтра (каждое — чистая функция).
+const { inPeriod } = require("filters/periods");
+const { dayKey, toMs, startOfDay, DAY } = require("lib/date");
+const { norm } = require("lib/search");
+const tagHit = (postTags, wanted) => postTags.some((t) => t === wanted || t.startsWith(wanted + "/"));
+
+const predicates = {
+  any: (p, f) => !f.any.length || f.any.some((t) => tagHit(p.tags, t)),
+  all: (p, f) => f.all.every((t) => tagHit(p.tags, t)),
+  not: (p, f) => !f.not.some((t) => tagHit(p.tags, t)),
+  attrs: (p, f) => f.attrs.every((a) => p.attrs.has(a)),
+  types: (p, f) => !f.types.length || f.types.includes(p.type),
+  sources: (p, f) => !f.sources.length || f.sources.includes(p.source),
+  period: (p, f, now) => inPeriod(p.ts, f.period, now),
+  day: (p, f) => !f.day || dayKey(p.ts) === f.day,
+  // Диапазон дат: «от» и «до» независимы — можно задать любой из них, оба или ни одного; границы включительно.
+  range: (p, f) => {
+    const from = f.dateFrom ? toMs(f.dateFrom) : null, to = f.dateTo ? toMs(f.dateTo) : null;
+    if (from != null && p.ts < startOfDay(from)) return false;
+    if (to != null && p.ts >= startOfDay(to) + DAY) return false;
+    return true;
+  },
+  backlinks: (p, f) => p.backlinks >= (f.minBacklinks || 0),
+  text: (p, f) => {
+    const words = norm((f.text || "").trim()).split(/\s+/).filter(Boolean);
+    return words.every((w) => p.search.includes(w) || (p.searchBody || "").includes(w));
+  },
+};
+module.exports = { predicates, tagHit };
+
+},
+"filters/presets": function (module, exports, require) {
+// filters/presets.js — сохранённые подборки: сводка правил (чипы) и применение к состоянию ленты.
+const { merge } = require("filters/state");
+const { byId: periods } = require("filters/periods");
+const { label: attrLabel } = require("filters/attrs");
+
+function ruleChips(preset) {
+  const f = merge(preset.filter), chips = [];
+  if (f.any.length) chips.push("теги: " + f.any.map((t) => "#" + t).join(" OR "));
+  if (f.all.length) chips.push("все: " + f.all.map((t) => "#" + t).join(" AND "));
+  if (f.not.length) chips.push("без: " + f.not.map((t) => "#" + t).join(", "));
+  if (f.attrs.length) chips.push(f.attrs.map(attrLabel).join(", "));
+  if (f.types.length) chips.push("тип: " + f.types.join(", "));
+  if (f.minBacklinks > 0) chips.push("связи: > " + (f.minBacklinks - 1));
+  if (periods[f.period] && f.period !== "all") chips.push("период: " + periods[f.period].label.toLowerCase());
+  if (f.dateFrom) chips.push("с " + f.dateFrom);
+  if (f.dateTo) chips.push("по " + f.dateTo);
+  if (preset.quick === "today") chips.push("в этот день");
+  if (preset.quick === "random") chips.push("рандом");
+  if (preset.quick === "favorites") chips.push("избранное");
+  return chips;
+}
+const toState = (preset) => ({ quick: preset.quick || "all", filter: merge(preset.filter) });
+module.exports = { ruleChips, toState };
+
+},
+"filters/quick-modes": function (module, exports, require) {
+// filters/quick-modes.js — быстрые режимы ленты: Все / В этот день / Рандомные / Избранное.
+const { sameMonthDay } = require("lib/date");
+const { shuffle } = require("lib/random");
+
+const MODES = [
+  { id: "all", icon: "infinity", label: () => "Все записи", test: () => true },
+  { id: "today", icon: "history", label: () => "В этот день", test: (p, c) => sameMonthDay(p.ts, c.now) },
+  { id: "random", icon: "dice", label: () => "Рандомные", pick: (list, c) => shuffle(list, c.seed).slice(0, c.config.randomCount || 12) },
+  { id: "favorites", icon: "star", label: () => "Избранное", test: (p, c) => c.flags.isFavorite(p) },
+];
+const byId = Object.fromEntries(MODES.map((m) => [m.id, m]));
+
+// c = { now, seed, config, flags }
+function applyQuick(posts, quick, c) {
+  const m = byId[quick] || byId.all;
+  let out = m.test ? posts.filter((p) => m.test(p, c)) : posts;
+  if (m.pick) out = m.pick(out, c);
+  return out;
+}
+const count = (posts, id, c) => { const m = byId[id]; return m && m.test ? posts.filter((p) => m.test(p, c)).length : posts.length; };
+module.exports = { MODES, byId, applyQuick, count };
+
+},
+"filters/sorters": function (module, exports, require) {
+// filters/sorters.js — варианты сортировки ленты.
+const SORTS = [
+  { id: "date-desc", label: "Сначала новые", cmp: (a, b) => b.ts - a.ts },
+  { id: "date-asc", label: "Сначала старые", cmp: (a, b) => a.ts - b.ts },
+  { id: "mtime-desc", label: "Дата изменения", cmp: (a, b) => b.mtime - a.mtime },
+  { id: "backlinks-desc", label: "Плотность связей", cmp: (a, b) => b.backlinks - a.backlinks || b.ts - a.ts },
+  { id: "length-desc", label: "Длина текста", cmp: (a, b) => b.size - a.size },
+  { id: "alpha-asc", label: "Алфавит", cmp: (a, b) => a.title.localeCompare(b.title, "ru") },
+];
+const get = (id) => (SORTS.find((s) => s.id === id) || SORTS[0]).cmp;
+module.exports = { SORTS, get };
+
+},
+"filters/state": function (module, exports, require) {
+// filters/state.js — модель состояния фильтра и неизменяемые операции над ним.
+const MODES = ["any", "all", "not"];
+const defaultFilter = () => ({ any: [], all: [], not: [], attrs: [], types: [], sources: [], period: "all", day: "", dateFrom: "", dateTo: "", minBacklinks: 0, text: "", sort: "date-desc" });
+const normTag = (t) => String(t || "").trim().replace(/^#+/, "").toLowerCase();
+const merge = (base, patch) => ({ ...defaultFilter(), ...(base || {}), ...(patch || {}) });
+const isDefault = (f) => JSON.stringify(merge(f)) === JSON.stringify(defaultFilter());
+const toggleIn = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+
+// Тег живёт ровно в одном режиме: повторный клик по тому же режиму снимает его.
+function toggleTag(filter, mode, tag) {
+  const t = normTag(tag), had = filter[mode].includes(t), next = { ...filter };
+  for (const m of MODES) next[m] = filter[m].filter((x) => x !== t);
+  if (!had) next[mode] = [...next[mode], t];
+  return next;
+}
+const removeTag = (filter, tag) => { const t = normTag(tag), n = { ...filter }; for (const m of MODES) n[m] = filter[m].filter((x) => x !== t); return n; };
+const tagMode = (filter, tag) => MODES.find((m) => filter[m].includes(normTag(tag))) || null;
+
+module.exports = { MODES, defaultFilter, normTag, merge, isDefault, toggleIn, toggleTag, removeTag, tagMode };
+
+},
+"filters/summary": function (module, exports, require) {
+// filters/summary.js — краткая сводка применённых условий для мобильной панели: ["Подборка: …", "В этот день", "#a #b", "с 1 окт", …].
+const { label: attrLabel } = require("filters/attrs");
+const { byId: periods } = require("filters/periods");
+const { MONTHS_GEN, toMs } = require("lib/date");
+
+const QUICK = { today: "В этот день", random: "Рандом", favorites: "Избранное" };
+function shortDate(s) {
+  const ms = toMs(s);
+  if (ms == null) return s;
+  const d = new Date(ms), cur = new Date().getFullYear();
+  return `${d.getDate()} ${MONTHS_GEN[d.getMonth()].slice(0, 3)}${d.getFullYear() === cur ? "" : " " + d.getFullYear()}`;
+}
+const tagList = (arr, max = 3) => arr.slice(0, max).map((t) => "#" + t).join(" ") + (arr.length > max ? ` +${arr.length - max}` : "");
+
+// presetName — имя активной подборки (если есть). Возвращает массив коротких строк в порядке важности.
+function summarize(state, { presetName } = {}) {
+  const f = state.filter, out = [];
+  if (presetName) out.push("Подборка: " + presetName);
+  if (QUICK[state.quick]) out.push(QUICK[state.quick]);
+  if (f.any.length) out.push(tagList(f.any));
+  if (f.all.length) out.push("все: " + tagList(f.all));
+  if (f.not.length) out.push("без " + tagList(f.not));
+  if (f.attrs.length) out.push(f.attrs.map(attrLabel).join(", "));
+  if ((f.text || "").trim()) out.push("«" + f.text.trim() + "»");
+  if (f.dateFrom || f.dateTo) out.push(f.dateFrom && f.dateTo ? `${shortDate(f.dateFrom)} – ${shortDate(f.dateTo)}` : f.dateFrom ? "с " + shortDate(f.dateFrom) : "по " + shortDate(f.dateTo));
+  if (f.day) out.push("день " + shortDate(f.day));
+  if (f.period && f.period !== "all" && periods[f.period]) out.push(periods[f.period].label.toLowerCase());
+  if (f.minBacklinks > 0) out.push("связи ≥ " + f.minBacklinks);
+  if (f.sources.length) out.push("источник: " + f.sources.join(", "));
+  if (f.types.length) out.push("тип: " + f.types.join(", "));
+  if (f.sort === "date-asc") out.push("Старые сначала");
+  else if (f.sort !== "date-desc") out.push("сортировка: " + f.sort.replace(/-.*/, ""));
+  return out;
+}
+module.exports = { summarize, shortDate };
+
+},
+"lib/async": function (module, exports, require) {
+// lib/async.js — debounce, пул задач с ограничением параллелизма, мьютекс.
+function debounce(fn, ms) {
+  let t;
+  const d = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  d.flush = (...a) => { clearTimeout(t); return fn(...a); };
+  return d;
+}
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+function createMutex() {
+  let tail = Promise.resolve();
+  return (task) => { const run = tail.then(task, task); tail = run.catch(() => {}); return run; };
+}
+module.exports = { debounce, mapPool, createMutex };
+
+},
+"lib/date": function (module, exports, require) {
+// lib/date.js — разбор и форматирование дат (всё в локальном времени).
+const DAY = 86400000;
+const MONTHS_GEN = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const MONTHS_NOM = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+const RU_MONTH = { янв: 0, фев: 1, мар: 2, апр: 3, мая: 4, май: 4, июн: 5, июл: 6, авг: 7, сен: 8, окт: 9, ноя: 10, дек: 11 };
+const pad = (n) => String(n).padStart(2, "0");
+
+function toMs(v) {
+  if (v == null || v === "") return null;
+  if (typeof v === "number") return isFinite(v) ? v : null;
+  if (v instanceof Date) return isNaN(v) ? null : v.getTime();
+  if (typeof v.toMillis === "function") return v.toMillis(); // luxon DateTime (Dataview)
+  if (typeof v === "object" && v.path) return fromFilename(v.path); // [[2024-10-01]] — дата из имени заметки
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)).getTime();
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2}))?/);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+  // «1 октября 2024, 16:12» · «1 окт 2024 г. в 16:12» · «1 октября 2024»
+  m = s.toLowerCase().match(/^(\d{1,2})\s+([а-яё]+)\.?\s+(\d{4})(?:\s*г\.?)?(?:[,\sв]+(\d{1,2}):(\d{2}))?/);
+  if (m && RU_MONTH[m[2].slice(0, 3)] !== undefined) return new Date(+m[3], RU_MONTH[m[2].slice(0, 3)], +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+  const t = Date.parse(s);
+  return isNaN(t) ? null : t;
+}
+
+function hasTime(v, ms) {
+  if (v == null) return false;
+  if (typeof v === "string") return /\d{1,2}:\d{2}/.test(v);
+  if (typeof v.hour === "number") return v.hour !== 0 || v.minute !== 0;
+  if (ms != null) { const d = new Date(ms); return d.getHours() !== 0 || d.getMinutes() !== 0; }
+  return false;
+}
+
+function fromFilename(name) {
+  const m = String(name || "").match(/(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : null;
+}
+
+const startOfDay = (ms) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const dayKey = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const monthKey = (ms) => dayKey(ms).slice(0, 7);
+const fmtDate = (ms) => dayKey(ms);
+const fmtTime = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+// «1 октября 2024» и «1 октября 2024, 16:12» — как в самих заметках
+const fmtDateLong = (ms) => { const d = new Date(ms); return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]} ${d.getFullYear()}`; };
+const fmtDateTime = (ms, withTime) => (withTime ? `${fmtDateLong(ms)}, ${fmtTime(ms)}` : fmtDateLong(ms));
+const fmtDayMonth = (ms) => { const d = new Date(ms); return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`; };
+const sameMonthDay = (a, b) => { const x = new Date(a), y = new Date(b); return x.getMonth() === y.getMonth() && x.getDate() === y.getDate(); };
+
+function relativeLabel(ms, now = Date.now(), withTime = true) {
+  const diff = Math.round((startOfDay(now) - startOfDay(ms)) / DAY);
+  const t = withTime ? `, ${fmtTime(ms)}` : "";
+  if (diff === 0) return "Сегодня" + t;
+  if (diff === 1) return "Вчера" + t;
+  const sameYear = new Date(ms).getFullYear() === new Date(now).getFullYear();
+  return sameYear ? fmtDayMonth(ms) + t : `${fmtDayMonth(ms)} ${new Date(ms).getFullYear()}`;
+}
+
+module.exports = { DAY, MONTHS_GEN, MONTHS_NOM, toMs, hasTime, fromFilename, startOfDay, dayKey, monthKey, fmtDate, fmtDateLong, fmtTime, fmtDateTime, fmtDayMonth, sameMonthDay, relativeLabel };
+
+},
+"lib/dom": function (module, exports, require) {
+// lib/dom.js — маленький хелпер для сборки DOM без фреймворков.
+function append(el, children) {
+  for (const c of children.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+function h(tag, props, ...children) {
+  const el = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.className = Array.isArray(v) ? v.filter(Boolean).join(" ") : v;
+      else if (k === "style" && typeof v === "object") { for (const [sk, sv] of Object.entries(v)) { if (sk.startsWith("--") && el.style.setProperty) el.style.setProperty(sk, sv); else el.style[sk] = sv; } } // CSS-переменные (--x) задаются через setProperty
+      else if (k === "dataset") Object.assign(el.dataset, v);
+      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
+      else if (v === true) el.setAttribute(k, "");
+      else el.setAttribute(k, v);
+    }
+  }
+  return append(el, children);
+}
+
+function clear(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+  return el;
+}
+
+module.exports = { h, append, clear };
+
+},
+"lib/icons": function (module, exports, require) {
+// lib/icons.js — inline SVG-иконки (24x24, stroke). Не зависит от внешних шрифтов.
+const P = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  dice: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1" fill="currentColor"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  star: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+  infinity: '<path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/>',
+  mic: '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  video: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  quote: '<path d="M3 21c3 0 7-1 7-8V5c0-1.25-.76-2.02-2-2H4c-1.25 0-2 .75-2 1.97V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .01-1 1.03V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.76-2.02-2-2h-4c-1.25 0-2 .75-2 1.97V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/>',
+  tasks: '<path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  hash: '<path d="M4 9h16"/><path d="M4 15h16"/><path d="M10 3 8 21"/><path d="m16 3-2 18"/>',
+  file: '<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/>',
+  pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+  rows: '<rect x="3" y="3" width="18" height="7" rx="1"/><rect x="3" y="14" width="18" height="7" rx="1"/>',
+  timeline: '<path d="M12 3v18"/><circle cx="12" cy="8" r="2"/><path d="M14 8h6"/><circle cx="12" cy="16" r="2"/><path d="M4 16h6"/>',
+  bento: '<rect x="3" y="3" width="8" height="12" rx="1"/><rect x="13" y="3" width="8" height="6" rx="1"/><rect x="13" y="11" width="8" height="10" rx="1"/><rect x="3" y="17" width="8" height="4" rx="1"/>',
+  arrowLeft: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+  sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/>',
+  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  arrowUpRight: '<path d="M7 7h10v10"/><path d="M7 17 17 7"/>',
+  flame: '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+  code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4"/><path d="m15.4 6.5-6.8 4"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  bolt: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  trend: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  back: '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+  expand: '<path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/>',
+  shrink: '<path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/>',
+  bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>',
+  newtab: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  unfold: '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  phone: '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  arrowDown: '<path d="M12 5v14"/><path d="m19 12-7 7-7-7"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+};
+
+function icon(name, opts = {}) {
+  const size = opts.size || 16;
+  const span = document.createElement("span");
+  span.className = "sf-icon" + (opts.cls ? " " + opts.cls : "");
+  span.innerHTML =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
+    `fill="${opts.fill ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" ` +
+    `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || P.file}</svg>`;
+  return span;
+}
+
+module.exports = { icon, names: Object.keys(P) };
+
+},
+"lib/layout": function (module, exports, require) {
+// lib/layout.js — сколько колонок помещается в ширину (config.columns.min/max + minCardWidth).
+// Узкий контейнер (< singleColumnBelow, по умолчанию 560px — телефон) всегда даёт 1 колонку.
+function columnCount(width, cfg, gap = 24) {
+  let { min = 2, max = 4 } = cfg.columns || {};
+  if (min > max) [min, max] = [max, min];
+  min = Math.max(1, min); max = Math.max(min, max);
+  if (!width) return max;
+  if (width < (cfg.singleColumnBelow ?? 560)) return 1;
+  const fit = Math.floor((width + gap) / ((cfg.minCardWidth || 320) + gap));
+  return Math.max(min, Math.min(max, fit));
+}
+module.exports = { columnCount };
+
+},
+"lib/misc": function (module, exports, require) {
+// lib/misc.js — мелкие утилиты: хэш, глубокий merge, копирование, приведение Dataview-массивов.
+const hash = (s) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+
+function deepMerge(base, over) {
+  if (Array.isArray(base) || Array.isArray(over) || typeof base !== "object" || typeof over !== "object" || !base || !over) return over === undefined ? base : over;
+  const out = { ...base };
+  for (const k of Object.keys(over)) out[k] = deepMerge(base[k], over[k]);
+  return out;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+    ta.remove(); return ok;
+  }
+}
+
+const toArray = (x) => (x == null ? [] : Array.isArray(x) ? x : typeof x[Symbol.iterator] === "function" && typeof x !== "string" ? Array.from(x) : [x]);
+function pageField(page, names) {
+  for (const n of names) { const v = page[n]; if (v !== undefined && v !== null && v !== "") return v; }
+  return undefined;
+}
+const uid = (p = "id") => p + "-" + Math.random().toString(36).slice(2, 8);
+
+module.exports = { hash, deepMerge, copyText, toArray, pageField, uid };
+
+},
+"lib/new-note-path": function (module, exports, require) {
+// lib/new-note-path.js — путь новой заметки по настройке (чистая функция).
+// Язык названий месяцев в путях — newNote.folderLang (по умолчанию en: 2026-10-October), в дате заметки — newNote.dateLang (по умолчанию ru).
+// Токены (регистр важен): YYYY — год, MM — месяц числом, MMMM — месяц словом (Октябрь; после «D »/«DD » — «октября»), DD — день с нулём, D — день без нуля, hh — часы, mm — минуты.
+// %%FOLDER_NAME в правиле заменяется на папку из настроек.
+const { MONTHS_NOM, MONTHS_GEN } = require("lib/date");
+const MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const pad = (n) => String(n).padStart(2, "0");
+
+// Месяц словом (токен MMMM) зависит от языка lang: "en" — October; "ru" — Октябрь, а после «D »/«DD » — родительный («16 октября»).
+function fmtTokens(pattern, d, lang = "ru") {
+  return String(pattern).replace(/(DD? )?(MMMM)|YYYY|MM|DD|D|hh|mm/g, (t, dayBefore, mmmm) => {
+    if (mmmm) {
+      const day = dayBefore ? dayBefore.replace(/^DD?/, (x) => (x === "DD" ? pad(d.getDate()) : String(d.getDate()))) : "";
+      const names = lang === "en" ? MONTHS_EN : dayBefore ? MONTHS_GEN : MONTHS_NOM;
+      return day + names[d.getMonth()];
+    }
+    return ({ YYYY: String(d.getFullYear()), MM: pad(d.getMonth() + 1), DD: pad(d.getDate()), D: String(d.getDate()), hh: pad(d.getHours()), mm: pad(d.getMinutes()) })[t];
+  });
+}
+const DEFAULT_DATE_RULE = "D MMMM YYYY, hh:mm";
+const clean = (p) => String(p).split("/").map((s) => s.trim().replace(/[\\:*?"<>|#^\[\]]/g, "-")).filter(Boolean).join("/");
+
+// → путь без расширения, например "notes/2026/2026-10-Октябрь/2026-10-22-00-31"
+function newNotePath(cfg, date = new Date()) {
+  const n = cfg || {}, folder = String(n.folder || "").replace(/^\/+|\/+$/g, "");
+  const file = n.fileName || "YYYY-MM-DD-hh-mm";
+  let raw;
+  if (n.mode === "rule") raw = fmtTokens(String(n.rule || file).replace(/%%FOLDER_NAME/g, folder), date, n.folderLang || "en");
+  else if (n.mode === "root" || !folder) raw = fmtTokens(file, date, n.folderLang || "en");
+  else raw = folder + "/" + fmtTokens(file, date, n.folderLang || "en");
+  return clean(raw);
+}
+module.exports = { newNotePath, fmtTokens, DEFAULT_DATE_RULE };
+
+},
+"lib/random": function (module, exports, require) {
+// lib/random.js — детерминированный рандом: «Перемешать» меняет seed, а не условия фильтра.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function shuffle(arr, seed) {
+  const rnd = mulberry32(seed), a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+const newSeed = () => Math.floor(Math.random() * 2 ** 31);
+module.exports = { mulberry32, shuffle, newSeed };
+
+},
+"lib/ru": function (module, exports, require) {
+// lib/ru.js — русские числа и склонения.
+function plural(n, forms) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return forms[2];
+  if (b > 1 && b < 5) return forms[1];
+  if (b === 1) return forms[0];
+  return forms[2];
+}
+const fmtNum = (n) => Number(n).toLocaleString("ru-RU");
+const withUnit = (n, forms) => `${fmtNum(n)} ${plural(n, forms)}`;
+module.exports = { plural, fmtNum, withUnit };
+
+},
+"lib/search": function (module, exports, require) {
+// lib/search.js — нормализация текста для поиска: регистр, ё→е, неразрывные пробелы.
+const norm = (s) => String(s || "").toLowerCase().replace(/ё/g, "е").replace(/\u00a0/g, " ");
+module.exports = { norm };
+
+},
+"lib/store": function (module, exports, require) {
+// lib/store.js — крошечный реактивный стор: set(patch) уведомляет подписчиков об изменённых ключах.
+function createStore(initial) {
+  let state = { ...initial };
+  const listeners = new Set();
+  return {
+    get: () => state,
+    set(patch) {
+      const changed = Object.keys(patch).filter((k) => state[k] !== patch[k]);
+      if (!changed.length) return;
+      state = { ...state, ...patch };
+      for (const l of [...listeners]) if (!l.keys || changed.some((k) => l.keys.includes(k))) l.fn(state, changed);
+    },
+    subscribe(fn, keys) {
+      const l = { fn, keys };
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+  };
+}
+module.exports = { createStore };
+
+},
+"lib/text": function (module, exports, require) {
+// lib/text.js — чистые функции для работы с markdown-текстом заметок.
+function stripFrontmatter(raw) {
+  return String(raw || "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+
+// Убирает то, что не должно попадать в превью: встраивания, комментарии, dataview-блоки.
+function cleanForExcerpt(md) {
+  return String(md || "")
+    .replace(/%%[\s\S]*?%%/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/```(?:dataview|dataviewjs)[\s\S]*?```/g, "")
+    .replace(/!\[\[[^\]]*\]\]/g, "")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Обрезает markdown по границе абзаца/предложения/слова, не разрывая [[вики-ссылки]].
+function truncateMarkdown(md, max) {
+  const text = String(md || "");
+  if (text.length <= max) return { text, truncated: false };
+  let cut = text.lastIndexOf("\n\n", max);
+  if (cut < max * 0.5) {
+    const m = text.slice(0, max).match(/[\s\S]*[.!?…»)]\s/);
+    cut = m ? m[0].length : -1;
+  }
+  if (cut < max * 0.5) cut = text.lastIndexOf(" ", max);
+  if (cut <= 0) cut = max;
+  let out = text.slice(0, cut);
+  const open = out.lastIndexOf("[[");
+  if (open > out.lastIndexOf("]]")) out = out.slice(0, open);
+  if ((out.match(/```/g) || []).length % 2 === 1) out += "\n```";
+  return { text: out.trimEnd() + "…", truncated: true };
+}
+
+// Markdown → простой текст для коротких превью (подборки, поиск).
+function plainText(md) {
+  return String(md || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
+    .replace(/\[\[([^\]#|]*)(?:#[^\]|]*)?\]\]/g, "$1")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+(\[[ xX]\]\s+)?/gm, "")
+    .replace(/[*_~`=]{1,3}/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+// Короткий фрагмент по границе слова.
+function snippet(text, max) {
+  const t = plainText(text);
+  if (t.length <= max) return t;
+  const cut = t.lastIndexOf(" ", max);
+  return t.slice(0, cut > max * 0.6 ? cut : max).trimEnd() + "…";
+}
+
+const wordCount = (md) => (String(md || "").match(/[\p{L}\p{N}'’-]+/gu) || []).length;
+const readMinutes = (words, wpm = 180) => Math.max(1, Math.ceil(words / wpm));
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const dqlEscape = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+module.exports = { plainText, snippet, stripFrontmatter, cleanForExcerpt, truncateMarkdown, wordCount, readMinutes, escapeRegExp, dqlEscape };
+
+},
+"model/analyzer": function (module, exports, require) {
+// model/analyzer.js — чистый разбор тела заметки: медиа, цитаты, задачи, ссылки, слова.
+const { kindOf } = require("model/media-kinds");
+const { stripFrontmatter, cleanForExcerpt, wordCount, readMinutes } = require("lib/text");
+
+const WIKI_EMBED = /!\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g;
+const MD_EMBED = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const WIKI_LINK = /(?<!!)\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]/g;
+const TASK = /^\s*[-*+]\s+\[([ xX])\]\s+(.*)$/;
+const URL_RE = /https?:\/\/[^\s)>\]]+/g;
+
+function collectQuotes(lines) {
+  const blocks = [];
+  let cur = null;
+  for (const line of lines) {
+    if (/^\s*>/.test(line)) {
+      const t = line.replace(/^\s*>\s?/, "");
+      if (!cur) cur = [];
+      cur.push(t);
+    } else if (cur) { blocks.push(cur); cur = null; }
+  }
+  if (cur) blocks.push(cur);
+  return blocks
+    .map((b) => {
+      let callout = null;
+      if (/^\[!(\w+)\][+-]?\s*(.*)$/.test(b[0])) {
+        const m = b[0].match(/^\[!(\w+)\][+-]?\s*(.*)$/);
+        callout = { kind: m[1].toLowerCase(), title: m[2] };
+        b = b.slice(1);
+      }
+      return { callout, text: b.join("\n").trim() };
+    })
+    .filter((q) => q.text && (!q.callout || ["quote", "cite"].includes(q.callout.kind)));
+}
+
+function analyze(rawOrBody) {
+  const body = stripFrontmatter(rawOrBody);
+  const media = [];
+  let m;
+  WIKI_EMBED.lastIndex = 0;
+  while ((m = WIKI_EMBED.exec(body))) media.push({ kind: kindOf(m[1]), target: m[1].trim(), alt: m[2] || "", remote: false });
+  MD_EMBED.lastIndex = 0;
+  while ((m = MD_EMBED.exec(body))) {
+    const target = decodeURI(m[2]);
+    media.push({ kind: kindOf(target) || (/^https?:/.test(target) ? "image" : null), target, alt: m[1], remote: /^https?:/.test(target) });
+  }
+  const known = media.filter((x) => x.kind);
+
+  const lines = body.split(/\r?\n/);
+  const tasks = [];
+  for (const l of lines) { const t = l.match(TASK); if (t) tasks.push({ done: t[1] !== " ", text: t[2] }); }
+
+  const quotes = collectQuotes(lines);
+  const text = cleanForExcerpt(body);
+  const words = wordCount(text);
+  const quoteChars = quotes.reduce((s, q) => s + q.text.length, 0);
+
+  const links = [];
+  WIKI_LINK.lastIndex = 0;
+  while ((m = WIKI_LINK.exec(body))) links.push(m[1].trim());
+  const external = [...new Set(body.replace(WIKI_EMBED, "").match(URL_RE) || [])];
+  const heading = (body.match(/^#{1,3}\s+(.+)$/m) || [])[1] || "";
+
+  return {
+    body, text, words, readMin: readMinutes(words),
+    media: known,
+    byKind: (k) => known.filter((x) => x.kind === k),
+    tasks: { total: tasks.length, done: tasks.filter((t) => t.done).length, items: tasks },
+    quotes, quoteRatio: text.length ? quoteChars / text.length : 0,
+    links, external, heading,
+  };
+}
+
+module.exports = { analyze };
+
+},
+"model/media-kinds": function (module, exports, require) {
+// model/media-kinds.js — определение типа медиа по расширению.
+const EXT = {
+  image: ["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"],
+  audio: ["mp3", "wav", "m4a", "ogg", "oga", "flac", "aac", "opus"],
+  video: ["mp4", "mov", "mkv", "webm", "m4v", "ogv"],
+  canvas: ["canvas"],
+  pdf: ["pdf"],
+};
+const MAP = {};
+for (const [kind, list] of Object.entries(EXT)) for (const e of list) MAP[e] = kind;
+
+function extOf(path) {
+  const m = String(path || "").split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : "";
+}
+const kindOf = (path) => MAP[extOf(path)] || null;
+module.exports = { EXT, extOf, kindOf };
+
+},
+"model/post": function (module, exports, require) {
+// model/post.js — нормализация страницы Dataview в «пост» ленты (без чтения тела заметки).
+const { toMs, hasTime, fromFilename } = require("lib/date");
+const { toArray, pageField } = require("lib/misc");
+const { kindOf } = require("model/media-kinds");
+const { norm } = require("lib/search");
+
+const normTag = (t) => String(t || "").trim().replace(/^#+/, "").toLowerCase();
+
+function matchSource(path, sources) {
+  for (const s of sources || []) {
+    if (s.enabled === false) continue;
+    const f = String(s.folder || "").replace(/^\/+|\/+$/g, "");
+    if (!f || path === f || path.startsWith(f + "/")) return s.id;
+  }
+  return null;
+}
+
+function createPost(page, config) {
+  const F = page.file;
+  const raw = pageField(page, config.dateFields);
+  let ts = toMs(raw), timed = ts != null && hasTime(raw, ts);
+  if (ts == null) ts = fromFilename(F.name);
+  // Время: из отдельного поля (time / время) или — если включено в настройках — из времени создания/изменения файла.
+  if (ts != null && !timed) {
+    const tf = pageField(page, ["time", "Time", "время", "Время"]);
+    const tm = tf != null && String(tf).match(/(\d{1,2}):(\d{2})/);
+    let hm = tm ? [+tm[1], +tm[2]] : null;
+    if (!hm && (config.timeFallback === "ctime" || config.timeFallback === "mtime")) {
+      const src = toMs(config.timeFallback === "ctime" ? F.ctime : F.mtime);
+      if (src != null) { const d = new Date(src); hm = [d.getHours(), d.getMinutes()]; }
+    }
+    if (hm) { const d = new Date(ts); d.setHours(hm[0], hm[1], 0, 0); ts = d.getTime(); timed = true; }
+  }
+  if (ts == null) ts = toMs(F.cday) ?? toMs(F.ctime) ?? 0;
+
+  const tags = [...new Set(toArray(F.tags).map(normTag).filter(Boolean))];
+  const outPaths = toArray(F.outlinks).map((l) => String((l && l.path) || "")).filter(Boolean);
+  const kinds = outPaths.map(kindOf).filter(Boolean);
+  const mediaKinds = new Set(kinds);
+  const mediaCounts = { image: 0, video: 0, audio: 0 };
+  for (const k of kinds) if (k in mediaCounts) mediaCounts[k]++;
+  const explicitTitle = page.title || page.Title;
+  const type = String(pageField(page, ["type", "тип", "kind"]) || "").toLowerCase();
+
+  const post = {
+    id: F.path, path: F.path, name: F.name,
+    title: String(explicitTitle || F.name),
+    hasOwnTitle: !!explicitTitle || !/^\d{4}-\d{2}-\d{2}/.test(F.name),
+    ts, hasTime: timed, tags,
+    source: matchSource(F.path, config.sources),
+    backlinks: toArray(F.inlinks).length,
+    links: outPaths.length,
+    size: F.size || 0,
+    mtime: toMs(F.mtime) || 0,
+    mediaKinds, mediaCounts,
+    typeHint: type,
+    favoriteMeta: pageField(page, [config.favoriteField]) === true || tags.some((t) => (config.favoriteTags || []).includes(t)),
+    cover: pageField(page, ["cover", "image", "обложка"]) || null,
+    tasksTotal: toArray(F.tasks).length,
+    attrs: new Set(),
+    search: norm(String(explicitTitle || "") + " " + F.name + " " + tags.join(" ")),
+    feats: null, // заполняется после чтения тела (services/content)
+  };
+  refreshAttrs(post, config);
+  return post;
+}
+
+// Пересчёт «атрибутов» (media/photo/audio/video/task/quote/link) — дешёвые признаки + признаки из тела.
+function refreshAttrs(post, config) {
+  const a = new Set();
+  const mk = post.mediaKinds;
+  if (mk.has("image")) { a.add("photo"); a.add("media"); }
+  if (mk.has("video")) { a.add("video"); a.add("media"); }
+  if (mk.has("audio")) { a.add("audio"); a.add("media"); }
+  if (post.tasksTotal > 0) a.add("task");
+  if (post.tags.some((t) => (config.quoteTags || []).includes(t))) a.add("quote");
+  const f = post.feats;
+  if (f) {
+    for (const m of f.media) { a.add("media"); if (m.kind === "image") a.add("photo"); if (m.kind === "video") a.add("video"); if (m.kind === "audio") a.add("audio"); }
+    if (f.tasks.total > 0) a.add("task");
+    if (f.quotes.length) a.add("quote");
+    if (f.external.length) a.add("link");
+  }
+  post.attrs = a;
+}
+
+function enrichPost(post, feats, config) {
+  post.feats = feats;
+  post.words = feats.words;
+  post.searchBody = norm(feats.body); // весь текст заметки (без frontmatter), а не только превью
+  refreshAttrs(post, config);
+  return post;
+}
+
+module.exports = { createPost, enrichPost, refreshAttrs, normTag, matchSource };
+
+},
+"plugin/block-params": function (module, exports, require) {
+// plugin/block-params.js — разбор параметров code-блока ```journal-stream (строки «ключ: значение») в input для app/main.mount.
+// Пример:
+//   ```journal-stream
+//   view: stream
+//   tags: мысли, daily
+//   period: 30d
+//   nav: false
+//   ```
+const BOOL = new Set(["true", "yes", "да", "on"]), NOBOOL = new Set(["false", "no", "нет", "off"]);
+const val = (v) => { const s = String(v).trim(), l = s.toLowerCase(); return BOOL.has(l) ? true : NOBOOL.has(l) ? false : s; };
+const list = (v) => String(v).split(/[,;]+/).map((t) => t.trim().replace(/^#/, "")).filter(Boolean);
+
+const FLAT = ["view", "layout", "theme", "id"];
+const BOOLS = ["nav", "fullWidth", "openInNewTab", "popupView"];
+const ALIASES = { tags: "any", любой: "any", теги: "any", alltags: "all", все: "all", exclude: "not", not: "not", исключить: "not", search: "text", text: "text", поиск: "text", period: "period", период: "period", sort: "sort", сортировка: "sort", from: "dateFrom", to: "dateTo", day: "day" };
+const VIEW_ALIAS = { обзор: "overview", лента: "stream", бенто: "bento", подборки: "collections", конструктор: "studio" };
+
+function parseBlock(source) {
+  const input = {}, filter = {}, errors = [];
+  for (const raw of String(source || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
+    const m = line.match(/^([^:]+):\s*(.*)$/);
+    if (!m) { errors.push(`Не понял строку: «${line}»`); continue; }
+    const key = m[1].trim(), k = key.toLowerCase(), v = m[2].trim();
+    if (FLAT.includes(key)) input[key] = key === "view" ? (VIEW_ALIAS[v.toLowerCase()] || v) : v;
+    else if (BOOLS.includes(key)) input[key] = val(v) === true;
+    else if (k === "viewmode") input.viewMode = v;
+    else if (ALIASES[k] === "any" || ALIASES[k] === "all" || ALIASES[k] === "not") filter[ALIASES[k]] = list(v).map((t) => t.toLowerCase());
+    else if (ALIASES[k]) filter[ALIASES[k]] = v;
+    else errors.push(`Неизвестный параметр: «${key}»`);
+  }
+  if (Object.keys(filter).length) input.filter = filter;
+  return { input, errors };
+}
+module.exports = { parseBlock };
+
+},
+"plugin/code-block": function (module, exports, require) {
+// plugin/code-block.js — встраивание ленты в заметку: ```journal-stream (параметры — в блоке, см. block-params.js).
+const { MarkdownRenderChild } = require("obsidian");
+const { mount } = require("app/main");
+const { parseBlock } = require("plugin/block-params");
+
+module.exports = function registerCodeBlock(plugin, core) {
+  plugin.registerMarkdownCodeBlockProcessor("journal-stream", async (source, el, mdCtx) => {
+    const { input, errors } = parseBlock(source);
+    const child = new MarkdownRenderChild(el);
+    mdCtx.addChild(child);
+    el.classList.add("sf-codeblock");
+    if (errors.length) el.createEl("div", { cls: "sf-block-warn", text: errors.join(" · ") });
+    const host = el.createEl("div");
+    try {
+      const inst = await mount(core, { container: host, input: { id: "block", ...input }, sourcePath: mdCtx.sourcePath, component: child });
+      child.onunload = () => inst.destroy();
+    } catch (e) {
+      console.error("[journal-stream]", e);
+      host.createEl("pre", { text: "[journal-stream] ошибка запуска:\n" + (e && e.stack ? e.stack : e) });
+    }
+  });
+};
+
+},
+"plugin/commands": function (module, exports, require) {
+// plugin/commands.js — ribbon-иконка и команды палитры.
+const { Notice } = require("obsidian");
+const { VIEW_TYPE } = require("plugin/view");
+
+const SECTIONS = [["overview", "Обзор"], ["stream", "Лента"], ["bento", "Бенто"], ["collections", "Подборки"], ["studio", "Конструктор"]];
+const BLOCK = "```journal-stream\nview: stream\n```\n";
+
+module.exports = function registerCommands(plugin, core) {
+  async function open(view) {
+    const ws = plugin.app.workspace;
+    let leaf = ws.getLeavesOfType(VIEW_TYPE)[0];
+    if (leaf) { if (view && leaf.view && leaf.view.goTo) leaf.view.goTo(view); }
+    else { leaf = ws.getLeaf(true); await leaf.setViewState({ type: VIEW_TYPE, active: true, state: view ? { view } : {} }); }
+    ws.revealLeaf(leaf);
+  }
+  plugin.openFeed = open;
+  plugin.addRibbonIcon("layout-grid", "Journal Stream", () => open());
+  plugin.addCommand({ id: "open", name: "Открыть ленту", callback: () => open() });
+  for (const [id, label] of SECTIONS) plugin.addCommand({ id: "open-" + id, name: "Открыть раздел: " + label, callback: () => open(id) });
+  plugin.addCommand({ id: "new-note", name: "Новая заметка (по правилам Journal Stream)", callback: () => plugin.createNote() });
+  plugin.addCommand({ id: "insert-block", name: "Вставить блок journal-stream в заметку", editorCallback: (editor) => editor.replaceSelection(BLOCK) });
+  plugin.addCommand({ id: "refresh", name: "Перечитать хранилище", callback: () => { for (const i of core.instances) { i.markDirty(); i.ctx.reload && i.ctx.reload(); } new Notice("Journal Stream: список заметок обновлён"); } });
+};
+
+},
+"plugin/index": function (module, exports, require) {
+// plugin/index.js — точка сборки плагина: общее ядро, вид-вкладка, code-block, настройки, команды, обновление при изменениях vault.
+const { createCore } = require("app/main");
+const { JournalStreamView, VIEW_TYPE } = require("plugin/view");
+const { JournalStreamSettingTab } = require("plugin/settings-tab");
+const registerCodeBlock = require("plugin/code-block");
+const registerCommands = require("plugin/commands");
+const { debounce } = require("lib/async");
+
+async function setup(plugin) {
+  const core = await createCore(plugin);
+  plugin.core = core;
+
+  // Изменения в настройках применяем «мягко»: перерисовываем открытые вкладки (code-block'и обновятся при следующем рендере заметки).
+  const remount = debounce(async (hard) => {
+    await require("services/css-loader")(core.storage);
+    if (hard) window.__sfSession = {};
+    for (const leaf of plugin.app.workspace.getLeavesOfType(VIEW_TYPE)) if (leaf.view && leaf.view.remount) await leaf.view.remount();
+    if (hard) { window.__sfSession = {}; for (const i of [...core.instances]) i.markDirty(); }
+  }, 600);
+  plugin.scheduleRemount = (hard) => remount(hard);
+
+  // Создание заметки без открытой ленты (команда палитры): минимальный контекст поверх общих настроек
+  plugin.createNote = async () => {
+    const { Notice } = require("obsidian");
+    try {
+      const ctx = { app: plugin.app, config: core.db.data.settings, store: { get: () => ({}) }, openNote: (p) => plugin.app.workspace.openLinkText(p, "", false) };
+      await require("services/new-note")(ctx)();
+    } catch (e) { console.error("[journal-stream] новая заметка", e); new Notice("Journal Stream: не удалось создать заметку — " + (e && e.message ? e.message : e)); }
+  };
+  plugin.registerView(VIEW_TYPE, (leaf) => new JournalStreamView(leaf, core));
+  registerCodeBlock(plugin, core);
+  registerCommands(plugin, core);
+  plugin.addSettingTab(new JournalStreamSettingTab(plugin.app, plugin, core));
+
+  // Заметки изменились/появились/удалены: помечаем списки устаревшими — следующий рендер/«Перечитать» подхватит.
+  const dirty = debounce(() => { for (const i of core.instances) i.markDirty(); }, 1500);
+  plugin.registerEvent(plugin.app.metadataCache.on("resolved", dirty));
+  plugin.registerEvent(plugin.app.vault.on("create", dirty));
+  plugin.registerEvent(plugin.app.vault.on("delete", dirty));
+  plugin.registerEvent(plugin.app.vault.on("rename", dirty));
+}
+
+function teardown(plugin) {
+  const core = plugin.core;
+  if (!core) return;
+  for (const i of [...core.instances]) i.destroy();
+  core.db.flush();
+  const st = document.getElementById(require("services/css-loader").STYLE_ID);
+  if (st) st.remove();
+}
+module.exports = { setup, teardown };
+
+},
+"plugin/settings-tab": function (module, exports, require) {
+// plugin/settings-tab.js — вкладка «Journal Stream» в настройках Obsidian. Правит тот же data.json, что и интерфейс ленты.
+const { PluginSettingTab, Setting, Notice } = require("obsidian");
+
+const csv = (a) => (a || []).join(", ");
+const parseCsv = (s) => String(s || "").split(/[,;\n]+/).map((t) => t.trim()).filter(Boolean);
+const slug = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "") || "src";
+
+const exampleText = (nn) => { const { newNotePath, fmtTokens, DEFAULT_DATE_RULE } = require("lib/new-note-path"), d = new Date(); return `${newNotePath(nn, d)}.md · date: ${fmtTokens(nn.dateRule || DEFAULT_DATE_RULE, d, nn.dateLang || "ru")}`; };
+
+class JournalStreamSettingTab extends PluginSettingTab {
+  constructor(app, plugin, core) { super(app, plugin); this.plugin = plugin; this.core = core; }
+
+  display() {
+    const { containerEl: el } = this, db = this.core.db, s = db.data.settings;
+    el.empty();
+    const changed = () => { db.save(); this.plugin.scheduleRemount(); if (this.example) this.example.setDesc(exampleText(s.newNote)); };
+    const text = (name, desc, get, set, opts = {}) => new Setting(el).setName(name).setDesc(desc).addText((t) => { t.setPlaceholder(opts.placeholder || "").setValue(get()).onChange((v) => { set(v); changed(); }); });
+    const area = (name, desc, get, set, placeholder) => new Setting(el).setName(name).setDesc(desc).addTextArea((t) => { t.setPlaceholder(placeholder || "").setValue(get()).onChange((v) => { set(v); changed(); }); t.inputEl.rows = 3; });
+    const toggle = (name, desc, key) => new Setting(el).setName(name).setDesc(desc).addToggle((t) => t.setValue(!!s[key]).onChange((v) => { s[key] = v; changed(); }));
+    const drop = (name, desc, key, options) => new Setting(el).setName(name).setDesc(desc).addDropdown((d) => { for (const [v, l] of options) d.addOption(v, l); d.setValue(String(s[key])).onChange((v) => { s[key] = v; changed(); }); });
+    const drop2 = (name, desc, get, set, options, redraw) => new Setting(el).setName(name).setDesc(desc).addDropdown((d) => { for (const [v, l] of options) d.addOption(v, l); d.setValue(get()).onChange((v) => { set(v); changed(); if (redraw) this.display(); }); });
+    const num = (name, desc, get, set, min, max) => text(name, desc, () => String(get()), (v) => { const n = Number(v); if (isFinite(n) && n >= min && n <= max) set(n); });
+
+    el.createEl("h2", { text: "Источники заметок" });
+    area("Папки с заметками", "По одной в строке. Пусто — весь vault. Несколько папок → в карточках можно показывать бейдж источника.",
+      () => (s.sources || []).filter((x) => x.folder).map((x) => x.folder).join("\n"),
+      (v) => { const folders = v.split("\n").map((x) => x.trim().replace(/^\/+|\/+$/g, "")).filter(Boolean); const old = s.sources || [];
+        s.sources = folders.length ? folders.map((f) => { const o = old.find((x) => x.folder === f); return o || { id: slug(f.split("/").pop()), label: f.split("/").pop(), folder: f, enabled: true }; }) : [{ id: "all", label: "Vault", folder: "", enabled: true }]; }, "notes");
+    area("Исключить папки", "По одной в строке: заметки из них не попадут в ленту.", () => (s.excludeFolders || []).join("\n"), (v) => { s.excludeFolders = v.split("\n").map((x) => x.trim()).filter(Boolean); }, "templates");
+    text("Исключить теги", "Через запятую, без #.", () => csv(s.excludeTags), (v) => { s.excludeTags = parseCsv(v).map((t) => t.replace(/^#/, "").toLowerCase()); });
+    text("Поля даты", "Поля frontmatter, откуда брать дату записи (по порядку). Если их нет — дата из имени файла (2024-10-01) или дата создания.", () => csv(s.dateFields), (v) => { const l = parseCsv(v); if (l.length) s.dateFields = l; });
+    drop("Время, если его нет в дате", "Откуда брать время записи, если в дате его нет.", "timeFallback", [["none", "Не показывать"], ["ctime", "Время создания файла"], ["mtime", "Время изменения файла"]]);
+    text("Теги избранного", "Через запятую.", () => csv(s.favoriteTags), (v) => { s.favoriteTags = parseCsv(v).map((t) => t.replace(/^#/, "").toLowerCase()); });
+    text("Теги цитат", "Через запятую.", () => csv(s.quoteTags), (v) => { s.quoteTags = parseCsv(v).map((t) => t.replace(/^#/, "").toLowerCase()); });
+
+    el.createEl("h2", { text: "Новая заметка" });
+    const nn = s.newNote;
+    drop2("Куда складывать", "Корень vault, одна папка или правило с датой.", () => nn.mode, (v) => { nn.mode = v; }, [["root", "В корень vault"], ["folder", "В папку"], ["rule", "По правилу"]], true);
+    text("Папка", "Для режима «В папку» и для %%FOLDER_NAME в правиле. Например: notes", () => nn.folder, (v) => { nn.folder = v.trim().replace(/^\/+|\/+$/g, ""); });
+    text("Правило", "Папки и имя файла одной строкой. %%FOLDER_NAME — папка из поля выше; YYYY год, MM месяц числом, MMMM месяц словом, DD день, hh часы, mm минуты.", () => nn.rule, (v) => { nn.rule = v.trim(); }, { placeholder: "%%FOLDER_NAME/YYYY/YYYY-MM-MMMM/YYYY-MM-DD-hh-mm" });
+    drop2("Месяц в названиях папок", "Язык токена MMMM в пути: English → 2026-10-October, Русский → 2026-10-Октябрь.", () => nn.folderLang || "en", (v) => { nn.folderLang = v; }, [["en", "English (October)"], ["ru", "Русский (Октябрь)"]]);
+    text("Имя файла", "Для режимов «В корень» и «В папку».", () => nn.fileName, (v) => { nn.fileName = v.trim() || "YYYY-MM-DD-hh-mm"; });
+    text("Дата в заметке", "Как записать дату во frontmatter (поле из «Полей даты»). Токены: YYYY, MM, MMMM (месяц словом; после «D » — «октября»), DD и D (день), hh, mm. По умолчанию: D MMMM YYYY, hh:mm", () => nn.dateRule, (v) => { nn.dateRule = v.trim() || "D MMMM YYYY, hh:mm"; }, { placeholder: "D MMMM YYYY, hh:mm" });
+    drop2("Месяц в дате заметки", "Язык токена MMMM в дате: Русский → 16 октября 2026, English → 16 October 2026.", () => nn.dateLang || "ru", (v) => { nn.dateLang = v; }, [["ru", "Русский (октября)"], ["en", "English (October)"]]);
+    this.example = new Setting(el).setName("Пример").setDesc(exampleText(nn));
+    new Setting(el).setName("Открывать после создания").addToggle((t) => t.setValue(nn.open !== false).onChange((v) => { nn.open = v; changed(); }));
+
+    el.createEl("h2", { text: "Вид" });
+    drop("Раздел по умолчанию", "С какого экрана открывается лента.", "defaultView", [["overview", "Обзор"], ["stream", "Лента"], ["bento", "Бенто"], ["collections", "Подборки"], ["studio", "Конструктор"]]);
+    drop("Тема", "«Как в Obsidian» — следовать теме приложения.", "theme", [["auto", "Как в Obsidian"], ["light", "Светлая"], ["dark", "Тёмная"]]);
+    toggle("На всю ширину", "Растянуть ленту на всю ширину заметки/вкладки.", "fullWidth");
+    drop("Скрывать боковую панель", "При открытии вкладки с лентой (не код-блока) сворачивать боковые панели Obsidian — больше места для карточек.", "hideSidebar", [["none", "Не скрывать"], ["left", "Левую"], ["right", "Правую"], ["both", "Обе"]]);
+    toggle("Возвращать панель при закрытии", "Раскрыть скрытые панели обратно, когда вкладка с лентой закрыта.", "restoreSidebar");
+    toggle("Открывать заметки в плавающем окне", "Клик по карточке показывает заметку в окне просмотра (не в редакторе); на карточках скрыты ссылки вперёд/назад (бэклинки). Ctrl/Cmd+клик — открыть в редакторе. Кнопка-глаз в шапке ленты переключает режим на лету.", "popupView");
+    toggle("Открывать заметки в новой вкладке", "Иначе — в текущей (Ctrl/Cmd+клик всегда в новой).", "openInNewTab");
+    num("Колонок минимум", "На десктопе (1–6).", () => s.columns.min, (n) => { s.columns.min = n; if (s.columns.max < n) s.columns.max = n; }, 1, 6);
+    num("Колонок максимум", "На десктопе (1–8).", () => s.columns.max, (n) => { s.columns.max = Math.max(n, s.columns.min); }, 1, 8);
+    num("Минимальная ширина карточки, px", "По ней считается, сколько колонок помещается (200–800).", () => s.minCardWidth, (n) => { s.minCardWidth = n; }, 200, 800);
+    num("Мобильный вид уже, px", "Ниже этой ширины блока лента — в один столбец с мобильным интерфейсом.", () => s.singleColumnBelow, (n) => { s.singleColumnBelow = n; }, 300, 1200);
+    num("Карточек за раз (десктоп)", "Размер «страницы» ленты.", () => s.pageSize, (n) => { s.pageSize = n; }, 6, 200);
+    num("Карточек за раз (телефон)", "", () => s.pageSizeMobile, (n) => { s.pageSizeMobile = n; }, 4, 100);
+    toggle("Бейдж источника на карточках", "Имеет смысл при нескольких папках.", "showSourceBadge");
+
+    el.createEl("h2", { text: "Поиск и диагностика" });
+    toggle("Фоновая индексация текстов", "После открытия ленты читает тела заметок в фоне — поиск находит и по тексту, не только по заголовкам.", "autoIndex");
+    toggle("Подробный лог (debug)", "Пишет в консоль (Ctrl+Shift+I) ход восстановления прокрутки.", "debug");
+
+    el.createEl("h2", { text: "Данные" });
+    new Setting(el).setName("Сбросить всё").setDesc("Настройки, подборки, избранное и предпочтения интерфейса вернутся к значениям по умолчанию. Файл data.json в папке плагина можно также просто удалить.")
+      .addButton((b) => b.setButtonText("Сбросить").setWarning().onClick(async () => {
+        if (!b.__armed) { b.__armed = true; b.setButtonText("Точно сбросить?"); setTimeout(() => { b.__armed = false; b.setButtonText("Сбросить"); }, 4000); return; }
+        await this.core.db.reset(); new Notice("Journal Stream: данные сброшены"); this.plugin.scheduleRemount(true); this.display();
+      }));
+  }
+}
+module.exports = { JournalStreamSettingTab };
+
+},
+"plugin/sidebar": function (module, exports, require) {
+// plugin/sidebar.js — скрытие боковых панелей Obsidian при открытии ленты (опция hideSidebar: none | left | right | both).
+// Возвращает функцию, которая раскрывает обратно ровно те панели, что были раскрыты до нас.
+function hideSidebars(app, mode) {
+  const ws = app.workspace, targets = [];
+  if (mode === "left" || mode === "both") targets.push(ws.leftSplit);
+  if (mode === "right" || mode === "both") targets.push(ws.rightSplit);
+  const hidden = [];
+  for (const sp of targets) if (sp && !sp.collapsed && typeof sp.collapse === "function") { sp.collapse(); hidden.push(sp); }
+  return () => { for (const sp of hidden) if (sp.collapsed && typeof sp.expand === "function") sp.expand(); };
+}
+module.exports = { hideSidebars };
+
+},
+"plugin/view": function (module, exports, require) {
+// plugin/view.js — отдельная вкладка Obsidian с лентой (ItemView). Сохраняет состояние и прокрутку между открытиями заметок.
+const { ItemView } = require("obsidian");
+const { mount } = require("app/main");
+const { hideSidebars } = require("plugin/sidebar");
+
+const VIEW_TYPE = "journal-stream-view";
+let counter = 0;
+
+class JournalStreamView extends ItemView {
+  constructor(leaf, core) {
+    super(leaf);
+    this.core = core;
+    this.input = {};
+    this.uid = "tab-" + (leaf && leaf.id ? leaf.id : ++counter);
+    this.inst = null;
+    this.mounting = null;
+  }
+  getViewType() { return VIEW_TYPE; }
+  getDisplayText() { return "Journal Stream"; }
+  getIcon() { return "layout-grid"; }
+
+  async onOpen() { await this.ensure(); }
+  async onClose() { this.unmount(); }
+
+  getState() { return { view: this.inst ? this.inst.ctx.store.get().view : this.input.view }; }
+  async setState(state, result) {
+    if (state && state.view) {
+      if (this.inst) this.inst.ctx.actions.enterView(state.view);
+      else this.input.view = state.view;
+    }
+    if (super.setState) await super.setState(state, result);
+  }
+
+  // Открыть нужный раздел (команды плагина)
+  goTo(view) { if (this.inst) this.inst.ctx.actions.enterView(view); else this.input.view = view; }
+
+  ensure() {
+    if (this.inst || this.mounting) return this.mounting;
+    const container = this.contentEl;
+    container.empty && container.empty();
+    container.classList.add("sf-view-host");
+    this.mounting = mount(this.core, { container, input: { ...this.input, id: this.uid }, sourcePath: "", component: this })
+      .then((inst) => { this.inst = inst; this.hideSidebar(); })
+      .catch((e) => { console.error("[journal-stream]", e); container.createEl("pre", { text: "[journal-stream] ошибка запуска:\n" + (e && e.stack ? e.stack : e) }); })
+      .finally(() => { this.mounting = null; });
+    return this.mounting;
+  }
+  // Опция «Скрывать боковую панель при открытии ленты»: прячем панели, при закрытии вкладки (если включено) — возвращаем.
+  hideSidebar() {
+    const s = this.core.db.data.settings;
+    if (!s.hideSidebar || s.hideSidebar === "none" || this.restoreSidebar) return;
+    const restore = hideSidebars(this.core.app, s.hideSidebar);
+    this.restoreSidebar = s.restoreSidebar === false ? () => {} : restore;
+  }
+  unmount() {
+    if (this.restoreSidebar) { try { this.restoreSidebar(); } catch (e) {} this.restoreSidebar = null; }
+    if (this.inst) { this.input.view = this.inst.ctx.store.get().view; this.inst.destroy(); this.inst = null; }
+    this.contentEl.empty && this.contentEl.empty();
+  }
+  async remount() { this.unmount(); await this.ensure(); }
+}
+module.exports = { JournalStreamView, VIEW_TYPE };
+
+},
+"services/changelog": function (module, exports, require) {
+// services/changelog.js — окно «История версий»: берёт раздел «## История версий» из README плагина и рисует его через MarkdownRenderer.
+const { Modal } = require("obsidian");
+
+function section(readme) {
+  const m = readme.match(/^## История версий[^\n]*\n([\s\S]*?)(?=^## |\s*$(?![\s\S]))/m);
+  return m ? m[1].trim() : "";
+}
+
+module.exports = function createChangelog({ app, storage, md, component }) {
+  return async function open() {
+    const text = section(await storage.readText("README.md")) || "История версий не найдена: проверьте README.md в папке плагина.";
+    const modal = new Modal(app);
+    modal.titleEl.setText("Journal Stream — история версий");
+    modal.modalEl.classList.add("sf-changelog");
+    await md.render(text, modal.contentEl, "");
+    modal.open();
+  };
+};
+module.exports.section = section;
+
+},
+"services/config": function (module, exports, require) {
+// services/config.js — настройки: значения по умолчанию + data/config.json (если файла нет — создаётся).
+
+const DEFAULTS = {
+  // Источники заметок. folder "" = весь vault (кроме excludeFolders). Можно добавить несколько источников,
+  // например { id: "lj", label: "LiveJournal", folder: "notes/LiveJournal" } — тогда в карточках появятся бейджи источников.
+  sources: [{ id: "notes", label: "Заметки", folder: "notes", enabled: true }],
+  excludeFolders: ["scripts", ".obsidian", "templates"],
+  excludeTags: [],
+  dateFields: ["date", "Date", "created", "Created", "дата", "Дата", "datetime", "Дата и время", "published"],
+  timeFallback: "none",       // none | ctime | mtime — откуда брать время, если в дате заметки его нет
+  openInNewTab: false,        // открывать заметку по клику на карточку в новой вкладке (Ctrl/Cmd+клик — всегда в новой)
+  favoriteField: "favorite",
+  favoriteTags: ["избранное", "favorite"],
+  quoteTags: ["цитата", "цитаты", "quote", "quotes"],
+  // Кнопка «Новая заметка»: куда складывать. mode: root — в корень vault; folder — в папку `folder`; rule — по правилу `rule`
+  // (папки и имя файла одной строкой; %%FOLDER_NAME — это `folder`; токены: YYYY, MM, MMMM (месяц словом), DD, D, hh, mm).
+  // dateRule — как записать дату в frontmatter новой заметки (по умолчанию «16 октября 2026, 18:14»).
+  newNote: { mode: "folder", folder: "notes", rule: "%%FOLDER_NAME/YYYY/YYYY-MM-MMMM/YYYY-MM-DD-hh-mm", fileName: "YYYY-MM-DD-hh-mm", dateRule: "D MMMM YYYY, hh:mm", folderLang: "en", dateLang: "ru", open: true },
+  hideSidebar: "none",       // none | left | right | both — скрывать боковые панели Obsidian при открытии вкладки с лентой
+  restoreSidebar: true,       // возвращать скрытые панели при закрытии вкладки с лентой
+  popupView: false,           // true: клик по карточке открывает заметку в плавающем окне просмотра (не в редакторе); Ctrl/Cmd+клик — в редакторе
+  theme: "auto",              // auto | dark | light
+  fullWidth: true,            // true: растянуть блок и заметку на всю ширину окна (можно переключать кнопкой в навигации)
+  nav: true,                  // верхняя навигация между экранами
+  defaultView: "stream",      // overview | stream | bento | collections | studio
+  layout: "masonry",          // masonry | flow | timeline (для вида stream)
+  columns: { min: 2, max: 4 }, // колонки карточек на десктопе (masonry и бенто); на телефоне всегда 1
+  minCardWidth: 320,          // минимальная ширина карточки в px — по ней считается, сколько колонок помещается
+  pageSize: 24,
+  pageSizeMobile: 12,         // сколько карточек за раз на телефоне (одна колонка)
+  singleColumnBelow: 560,     // ширина блока (px), ниже которой лента — в один столбец и включается мобильный интерфейс
+  excerptChars: 420,
+  randomCount: 12,
+  insightsCount: 3,           // сколько карточек в «Случайных озарениях» по умолчанию (переключатель на обзоре запоминается)
+  insightsOptions: [3, 6, 9, 12],
+  topTags: 24,
+  concurrency: 8,             // параллельное чтение заметок
+  debug: false,               // true: подробный лог восстановления прокрутки в консоль (Ctrl+Shift+I)
+  autoIndex: true,            // после открытия ленты в фоне индексировать тексты заметок — поиск находит и по тексту, не только по заголовкам
+  deepScan: false,            // true: прочитать тела всех заметок (точные «Цитаты/Ссылки» в фильтре, но медленнее)
+  showSourceBadge: false,   // бейдж источника на карточке (имеет смысл при нескольких источниках)
+  dql: { dateExpr: "file.cday" },
+};
+
+module.exports = { DEFAULTS };
+
+},
+"services/content": function (module, exports, require) {
+// services/content.js — ленивое чтение тела заметок с кэшем по mtime.
+const { analyze } = require("model/analyzer");
+const { enrichPost } = require("model/post");
+const types = require("types");
+const { mapPool } = require("lib/async");
+
+module.exports = function createContent({ app, config }) {
+  const cache = new Map(); // path -> { mtime, feats }
+
+  async function load(post) {
+    const file = app.vault.getAbstractFileByPath(post.path);
+    if (!file) return null;
+    const mtime = file.stat ? file.stat.mtime : 0;
+    let hit = cache.get(post.path);
+    if (!hit || hit.mtime !== mtime) {
+      const raw = await app.vault.cachedRead(file);
+      hit = { mtime, feats: analyze(raw) };
+      cache.set(post.path, hit);
+    }
+    if (post.feats !== hit.feats) {
+      enrichPost(post, hit.feats, config);
+      post.type = types.resolve(post, hit.feats).id;
+    }
+    return hit.feats;
+  }
+  // Одна нечитаемая заметка не должна прерывать индексацию остальных.
+  const preload = (posts, onProgress) => mapPool(posts, config.concurrency || 8, async (p, i) => {
+    try { await load(p); } catch (e) { console.warn("[journal-stream] не удалось прочитать", p.path, e); }
+    if (onProgress) onProgress(i + 1, posts.length);
+  });
+  return { load, preload, clear: () => cache.clear() };
+};
+
+},
+"services/css-loader": function (module, exports, require) {
+// services/css-loader.js — подключает все css/*.css плагина (по порядку имён) одним <style> в документ.
+// Свои правки — в css/90-custom.css (он подключается последним). Повторный вызов обновляет содержимое.
+const ID = "journal-stream-style";
+module.exports = async function loadCss(storage) {
+  const files = (await storage.listFiles("css")).filter((f) => f.endsWith(".css")).sort((a, b) => a.split("/").pop().localeCompare(b.split("/").pop()));
+  const parts = [];
+  for (const f of files) parts.push(`/* ${f.split("/").pop()} */\n` + (await storage.readText("css/" + f.split("/").pop())));
+  let el = document.getElementById(ID);
+  if (!el) { el = document.createElement("style"); el.id = ID; document.head.appendChild(el); }
+  el.textContent = parts.join("\n\n");
+  return files.length;
+};
+module.exports.STYLE_ID = ID;
+
+},
+"services/db": function (module, exports, require) {
+// services/db.js — ЕДИНЫЙ файл данных плагина (data.json): настройки, подборки, избранное/закрепы, UI-предпочтения.
+// Удалите data.json (или нажмите «Сбросить» в настройках плагина) — при следующем запуске всё пересоздастся по умолчанию.
+// База одна на плагин: её делят все открытые виды (вкладка и code-block'и), а также вкладка настроек.
+const { deepMerge } = require("lib/misc");
+const { debounce } = require("lib/async");
+
+module.exports = async function createDb(storage, defaults) {
+  const raw = await storage.load();
+  const fresh = !raw;
+  const src = raw || {};
+  const data = {
+    version: 3,
+    appVersion: src.appVersion,
+    settings: deepMerge(defaults.settings, src.settings || {}),
+    ui: src.ui || {},
+    presets: Array.isArray(src.presets) ? src.presets : defaults.presets,
+    flags: src.flags || {},
+  };
+  const save = debounce(() => storage.save(data), 400);
+  if (fresh) await storage.save(data);
+  // Сброс: всё возвращается к значениям по умолчанию, объект data остаётся тем же (на него ссылаются открытые виды).
+  async function reset() {
+    data.settings = deepMerge(defaults.settings, {});
+    data.ui = {}; data.flags = {}; data.presets = JSON.parse(JSON.stringify(defaults.presets));
+    data.appVersion = undefined;
+    await storage.save(data);
+  }
+  return { data, save, flush: () => save.flush(), reset, fresh };
+};
+
+},
+"services/flags": function (module, exports, require) {
+// services/flags.js — избранное и закрепы (хранятся в едином файле данных; файлы заметок не изменяются).
+module.exports = function createFlags({ db }) {
+  const data = db.data.flags;
+  const get = (p) => data[p.path] || {};
+  function toggle(p, key) {
+    const cur = { ...get(p) };
+    if (cur[key]) delete cur[key]; else cur[key] = true;
+    if (Object.keys(cur).length) data[p.path] = cur; else delete data[p.path];
+    db.save();
+    return !!cur[key];
+  }
+  return {
+    isFavorite: (p) => !!get(p).favorite || p.favoriteMeta,
+    isPinned: (p) => !!get(p).pinned,
+    toggleFavorite: (p) => toggle(p, "favorite"),
+    togglePin: (p) => toggle(p, "pinned"),
+  };
+};
+
+},
+"services/indexer": function (module, exports, require) {
+// services/indexer.js — фоновая индексация текстов заметок для поиска (один раз за сеанс, прогресс доступен подписчикам).
+// Пока индекс не готов, поиск работает по заголовкам и тегам; по завершении результаты пересчитываются автоматически.
+module.exports = function createIndexer(ctx) {
+  let state = { running: false, done: false, i: 0, n: 0 };
+  const subs = new Set();
+  const emit = () => subs.forEach((cb) => cb({ ...state }));
+  return {
+    status: () => ({ ...state }),
+    onChange(cb) { subs.add(cb); return () => subs.delete(cb); },
+    reset() { state = { running: false, done: false, i: 0, n: 0 }; emit(); },
+    async ensure(posts) {
+      if (state.running || state.done) return;
+      state = { running: true, done: false, i: 0, n: posts.length }; emit();
+      await ctx.content.preload(posts, (i, n) => { state.i = i; if (i % 20 === 0 || i === n) emit(); });
+      state = { running: false, done: true, i: posts.length, n: posts.length }; emit();
+      ctx.actions.setFilter({}); // пересчитать ленту уже с поиском по тексту
+    },
+  };
+};
+
+},
+"services/md": function (module, exports, require) {
+// services/md.js — рендер markdown внутрь элемента через MarkdownRenderer Obsidian (с запасным вариантом — простой текст).
+const { MarkdownRenderer } = require("obsidian");
+
+module.exports = function createMarkdown({ app, component }) {
+  async function render(md, el, path) {
+    try {
+      if (typeof MarkdownRenderer.render === "function") await MarkdownRenderer.render(app, md, el, path || "", component);
+      else await MarkdownRenderer.renderMarkdown(md, el, path || "", component);
+    } catch (e) {
+      console.warn("[journal-stream] markdown fallback", e);
+      el.textContent = md;
+    }
+  }
+  return { render };
+};
+
+},
+"services/media": function (module, exports, require) {
+// services/media.js — ссылка на медиафайл → URL ресурса Obsidian.
+module.exports = function createMedia(app) {
+  return {
+    resolveFile(target, sourcePath) {
+      return app.metadataCache.getFirstLinkpathDest(decodeURIComponent(target), sourcePath);
+    },
+    resolve(target, sourcePath) {
+      if (/^https?:\/\//i.test(target)) return target;
+      const f = app.metadataCache.getFirstLinkpathDest(decodeURIComponent(target), sourcePath);
+      return f ? app.vault.getResourcePath(f) : null;
+    },
+  };
+};
+
+},
+"services/new-note": function (module, exports, require) {
+// services/new-note.js — создание новой заметки по настройке `newNote` и открытие её.
+const { newNotePath } = require("lib/new-note-path");
+const { fmtTokens, DEFAULT_DATE_RULE } = require("lib/new-note-path");
+
+module.exports = function createNewNote(ctx) {
+  const { app, config } = ctx;
+  async function ensureFolders(path) {
+    const parts = path.split("/").slice(0, -1);
+    let cur = "";
+    for (const p of parts) {
+      cur = cur ? cur + "/" + p : p;
+      if (!app.vault.getAbstractFileByPath(cur)) { try { await app.vault.createFolder(cur); } catch (e) { if (!app.vault.getAbstractFileByPath(cur)) throw e; } }
+    }
+  }
+  return async function create() {
+    const now = new Date(), base = newNotePath(config.newNote, now);
+    let path = base + ".md", i = 1;
+    while (app.vault.getAbstractFileByPath(path)) path = `${base}-${++i}.md`;
+    await ensureFolders(path);
+    const field = (config.dateFields && config.dateFields[0]) || "date";
+    const file = await app.vault.create(path, `---\n${field}: "${fmtTokens((config.newNote && config.newNote.dateRule) || DEFAULT_DATE_RULE, now, (config.newNote && config.newNote.dateLang) || "ru")}"\n---\n\n`);
+    if (ctx.repo) ctx.repo.markDirty();
+    if (!config.newNote || config.newNote.open !== false) ctx.openNote(file.path || path);
+    return file;
+  };
+};
+
+},
+"services/notes": function (module, exports, require) {
+// services/notes.js — чтение заметок через metadataCache Obsidian (без Dataview) и приведение к «странице» для model/post.
+// Страница: { file: { path, name, tags, inlinks, outlinks, tasks, size, ctime, mtime, cday }, ...frontmatter, title }.
+// Всё берётся из кэша метаданных — тела заметок здесь не читаются.
+const normFmTags = (v) => (Array.isArray(v) ? v : typeof v === "string" ? v.split(/[,\s]+/) : []).map((t) => String(t).trim()).filter(Boolean);
+
+function backlinkMap(app) {
+  const res = (app.metadataCache && app.metadataCache.resolvedLinks) || {};
+  const back = new Map();
+  for (const from of Object.keys(res)) for (const to of Object.keys(res[from] || {})) {
+    if (to === from) continue;
+    let a = back.get(to); if (!a) back.set(to, (a = [])); a.push(from);
+  }
+  return back;
+}
+
+function toPage(app, file, back) {
+  const cache = (app.metadataCache.getFileCache && app.metadataCache.getFileCache(file)) || {};
+  const fm = cache.frontmatter || {};
+  const res = (app.metadataCache.resolvedLinks && app.metadataCache.resolvedLinks[file.path]) || {};
+  const tags = [...(cache.tags || []).map((t) => t.tag), ...normFmTags(fm.tags), ...normFmTags(fm.tag)];
+  const tasks = (cache.listItems || []).filter((li) => li.task !== undefined && li.task !== null);
+  const st = file.stat || {};
+  const cday = st.ctime ? new Date(new Date(st.ctime).setHours(0, 0, 0, 0)).getTime() : 0;
+  const page = {
+    ...fm,
+    file: {
+      path: file.path, name: file.basename || file.name.replace(/\.md$/, ""), tags,
+      outlinks: Object.keys(res).map((p) => ({ path: p })),
+      inlinks: (back.get(file.path) || []).map((p) => ({ path: p })),
+      tasks, size: st.size || 0, ctime: st.ctime || 0, mtime: st.mtime || 0, cday,
+    },
+  };
+  return page;
+}
+
+module.exports = { toPage, backlinkMap };
+
+},
+"services/posts": function (module, exports, require) {
+// services/posts.js — репозиторий постов: заметки vault (metadataCache) → нормализованные посты (тела не читаются).
+const { createPost } = require("model/post");
+const { toPage, backlinkMap } = require("services/notes");
+const types = require("types");
+
+module.exports = function createPostsRepo({ app, config }) {
+  let cache = null;
+
+  const folderOf = (s) => String(s.folder || "").replace(/^\/+|\/+$/g, "");
+  function inSources(path) {
+    const act = (config.sources || []).filter((s) => s.enabled !== false);
+    if (!act.length) return true;
+    return act.some((s) => { const f = folderOf(s); return !f || path === f || path.startsWith(f + "/"); });
+  }
+  const excluded = (path) => (config.excludeFolders || []).some((f) => { f = String(f).replace(/^\/+|\/+$/g, ""); return f && (path === f || path.startsWith(f + "/")); });
+
+  function collect(force = false) {
+    if (cache && !force) return cache;
+    const back = backlinkMap(app);
+    const posts = [];
+    for (const file of app.vault.getMarkdownFiles()) {
+      if (!inSources(file.path) || excluded(file.path)) continue;
+      const post = createPost(toPage(app, file, back), config);
+      if ((config.excludeTags || []).some((t) => post.tags.includes(t))) continue;
+      post.type = types.resolve(post, null).id;
+      posts.push(post);
+    }
+    cache = posts;
+    return posts;
+  }
+  return { collect, refresh: () => collect(true), markDirty: () => { cache = null; } };
+};
+
+},
+"services/presets": function (module, exports, require) {
+// services/presets.js — смарт-подборки в data/presets.json.
+const { uid } = require("lib/misc");
+
+const DEFAULT_PRESETS = [
+  { id: "atomic", name: "Атомарные озарения недели", icon: "bolt", description: "Записи с высокой плотностью связей за последние 7 дней", quick: "all", filter: { any: ["мысли", "zettel"], minBacklinks: 3, period: "7d" } },
+  { id: "voice", name: "Голосовые черновики", icon: "mic", description: "Аудио-заметки без обработки", quick: "all", filter: { attrs: ["audio"], not: ["архив"] } },
+  { id: "video", name: "Видео-конспекты", icon: "video", description: "Заметки с видео", quick: "all", filter: { attrs: ["video"] } },
+  { id: "quotes", name: "Цитаты", icon: "quote", description: "Выписки и цитаты", quick: "all", filter: { attrs: ["quote"] } },
+  { id: "today", name: "В этот день", icon: "history", description: "Что вы писали в этот день в прошлые годы", quick: "today", filter: {} },
+  { id: "random30", name: "Случайная выборка за период", icon: "dice", description: "Рандом из заметок за последние 30 дней — 🎲 перемешивает", quick: "random", filter: { period: "30d" } },
+];
+
+function createPresets({ db }) {
+  const get = () => db.data.presets;
+  return {
+    list: () => get(),
+    get: (id) => get().find((p) => p.id === id),
+    save(preset) {
+      const p = { ...preset, id: preset.id || uid("flt") };
+      const list = get(), i = list.findIndex((x) => x.id === p.id);
+      db.data.presets = i >= 0 ? list.map((x, j) => (j === i ? p : x)) : [...list, p];
+      db.save();
+      return p;
+    },
+    remove(id) { db.data.presets = get().filter((p) => p.id !== id); db.save(); },
+  };
+}
+module.exports = { DEFAULT_PRESETS, createPresets };
+
+},
+"services/scroll": function (module, exports, require) {
+// services/scroll.js — запоминание и восстановление прокрутки заметки с виджетом.
+//
+// Главное: прокручиваемый контейнер определяется НАДЁЖНО.
+//  • сначала — элемент, на котором реально происходили события scroll (last): он гарантированно настоящий;
+//  • затем — подсказка из прошлого сеанса (scrollerSel) и известные контейнеры Obsidian (.markdown-preview-view, .cm-scroller);
+//  • и только потом — эвристика по overflow, причём ТОЛЬКО для элементов, которые действительно прокручиваются
+//    (у промежуточных обёрток computed overflow-y бывает "auto" без прокрутки: из-за них раньше сохранялся scrollTop = 0).
+//
+// Остальные меры: позиция и высота фиксируются при клике по карточке (leave); пока идёт восстановление (hold), новые значения
+// не сохраняются; высота виджета резервируется; восстановление «удерживается» 3 с (Obsidian может сам сдвинуть прокрутку после
+// рендера); события от «мёртвого» виджета (заметку уже сменили) игнорируются. config.debug = true пишет ход дел в консоль.
+const { debounce } = require("lib/async");
+
+const KNOWN = ".markdown-preview-view, .cm-scroller";
+const HINTS = ["markdown-preview-view", "cm-scroller", "view-content"];
+
+module.exports = function createScroll({ session, key, log = () => {} }) {
+  let rootEl = null, last = null, cancelled = false, frozen = false, held = false, holdTimer = null;
+  const listeners = new Set();
+  const alive = () => !!rootEl && rootEl.isConnected !== false && (rootEl.offsetHeight === undefined || rootEl.offsetHeight > 0);
+  const scrollable = (n) => n.scrollHeight - n.clientHeight > 1;
+  const hintOf = (t) => HINTS.find((c) => t.classList && t.classList.contains(c));
+
+  function findScroller() {
+    if (!rootEl) return null;
+    if (last && last.isConnected !== false && last.contains && last.contains(rootEl)) return last;
+    if (rootEl.closest) {
+      const hint = (session.get() || {}).scrollerSel;
+      const byHint = hint && rootEl.closest("." + hint);
+      if (byHint) return byHint;
+      const known = rootEl.closest(KNOWN);
+      if (known) return known;
+    }
+    for (let n = rootEl.parentElement || rootEl.parentNode; n && n.nodeType === 1; n = n.parentElement || n.parentNode) {
+      const oy = typeof getComputedStyle === "function" ? getComputedStyle(n).overflowY : "";
+      if ((oy === "auto" || oy === "scroll" || oy === "overlay") && scrollable(n)) return n;
+    }
+    return rootEl.closest ? rootEl.closest(".view-content") : null;
+  }
+  const snapshot = (sc) => { session.patch({ scroll: sc.scrollTop, height: rootEl.offsetHeight || undefined, scrollerSel: hintOf(sc) }); log("save", sc.scrollTop, hintOf(sc) || sc.className); };
+
+  const save = debounce((t) => { if (!frozen && !held && alive()) snapshot(t); }, 80);
+  const onScroll = (e) => {
+    const t = e.target;
+    if (!(rootEl && t && t.nodeType === 1 && t.contains && t.contains(rootEl))) return;
+    last = t;
+    listeners.forEach((cb) => cb(t.scrollTop));
+    save(t);
+  };
+  const onUser = () => { cancelled = true; };
+  const USER = ["wheel", "touchmove", "keydown"];
+
+  const g = (window.__sfScrollOff = window.__sfScrollOff || {});
+  if (g[key]) g[key]();               // не копим слушатели при повторных перерисовках блока
+  if (document.addEventListener) {
+    document.addEventListener("scroll", onScroll, true);
+    USER.forEach((e) => document.addEventListener(e, onUser, true));
+    g[key] = () => { document.removeEventListener("scroll", onScroll, true); USER.forEach((e) => document.removeEventListener(e, onUser, true)); };
+  }
+
+  const release = () => { held = false; clearTimeout(holdTimer); };
+  return {
+    setRoot(el) { rootEl = el; },
+    destroy() { if (g[key]) { g[key](); delete g[key]; } listeners.clear(); clearTimeout(holdTimer); cancelled = true; },
+    scroller: () => findScroller(),
+    onScroll(cb) { listeners.add(cb); return () => listeners.delete(cb); },
+    toTop() { const sc = findScroller(); if (!sc) return; if (sc.scrollTo) sc.scrollTo({ top: 0, behavior: "smooth" }); else sc.scrollTop = 0; },
+
+    // Приостановить сохранение позиции (вызывается до построения интерфейса, если предстоит восстановление).
+    hold() { held = true; clearTimeout(holdTimer); holdTimer = setTimeout(release, 16000); },
+
+    // Восстановить позицию: повторяем, пока страница не станет достаточно высокой, затем удерживаем 3 с.
+    restore(top, onDone) {
+      held = true; cancelled = false; frozen = false;
+      clearTimeout(holdTimer); holdTimer = setTimeout(release, 16000);
+      const t0 = Date.now(); let okSince = 0;
+      const finish = (why) => { log("restore done:", why); release(); if (onDone) onDone(); };
+      const tick = () => {
+        if (!top) return finish("нет позиции");
+        if (cancelled) return finish("пользователь прокручивает сам");
+        const sc = findScroller();
+        if (sc) {
+          if (Math.abs(sc.scrollTop - top) >= 2) { sc.scrollTop = top; okSince = 0; log("restore set", top, "→", sc.scrollTop, "высота", sc.scrollHeight, hintOf(sc) || sc.className); }
+          else if (!okSince) okSince = Date.now();
+        } else log("restore: контейнер прокрутки не найден");
+        if (okSince && Date.now() - okSince > 3000) return finish("позиция удержана");
+        if (Date.now() - t0 > 12000) return finish("таймаут");
+        setTimeout(tick, 120);
+      };
+      tick();
+    },
+
+    // Уходим со страницы (клик по карточке): зафиксировать позицию и высоту и больше их не менять.
+    leave() {
+      const sc = findScroller(), saved = (session.get() || {}).scroll || 0;
+      // не затираем верную позицию нулём от элемента, который на самом деле не прокручивается
+      if (sc && alive() && !held && !(sc.scrollTop === 0 && saved > 0 && sc !== last)) snapshot(sc);
+      frozen = true;
+    },
+
+    // Вход в раздел: показать верх блока.
+    toBlockTop() {
+      const sc = findScroller();
+      if (!sc || !rootEl.getBoundingClientRect) return;
+      const delta = rootEl.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+      if (delta < 0) sc.scrollTop += delta - 8;
+      snapshot(sc);
+    },
+  };
+};
+
+},
+"services/session": function (module, exports, require) {
+// services/session.js — состояние экрана в памяти окна Obsidian (переживает перерисовку блока при переходах
+// «заметка → назад»). Намеренно НЕ пишется на диск: после перезапуска Obsidian лента стартует с чистого листа.
+module.exports = function createSession(key) {
+  const g = (window.__sfSession = window.__sfSession || {});
+  return {
+    get: () => g[key] || null,
+    patch: (p) => { g[key] = { ...(g[key] || {}), ...p }; },
+  };
+};
+
+},
+"services/storage": function (module, exports, require) {
+// services/storage.js — доступ к данным и ресурсам плагина.
+//  • данные пользователя (настройки, подборки, избранное, UI) — один файл data.json через plugin.loadData/saveData;
+//  • ресурсы (css/*.css, README) — из папки плагина (vault adapter) либо, в собранном main.js, из встроенного bundle.
+module.exports = function createStorage(plugin) {
+  const adapter = plugin.app.vault.adapter;
+  const dir = plugin.manifest.dir;
+  const full = (rel) => `${dir}/${rel}`;
+  const bundle = plugin.__bundle || null; // в собранном main.js css и README лежат внутри
+  return {
+    dir,
+    async load() { try { return (await plugin.loadData()) || null; } catch (e) { console.warn("[journal-stream] не удалось прочитать data.json", e); return null; } },
+    async save(data) { try { await plugin.saveData(data); return true; } catch (e) { console.warn("[journal-stream] не удалось записать data.json", e); return false; } },
+    async readText(rel) {
+      if (bundle && rel !== "css/90-custom.css") { const r = rel.startsWith("css/") ? bundle.css[rel.slice(4)] : rel === "README.md" ? bundle.readme : undefined; if (r !== undefined) return r; }
+      const p = full(rel); return (await adapter.exists(p)) ? adapter.read(p) : "";
+    },
+    // css/90-custom.css на диске (если есть) важнее встроенного: пользовательские правки не теряются
+    async listFiles(rel) {
+      const p = full(rel), disk = (await adapter.exists(p)) ? (await adapter.list(p)).files : [];
+      if (bundle && rel === "css") { const names = new Set(Object.keys(bundle.css)); disk.forEach((f) => names.add(f.split("/").pop())); return [...names].filter((n) => n.endsWith(".css")).map((n) => rel + "/" + n); }
+      return disk;
+    },
+  };
+};
+
+},
+"services/theme-watch": function (module, exports, require) {
+// services/theme-watch.js — следит за темой Obsidian (класс theme-dark / theme-light на <body>).
+// Когда пользователь переключает тему Obsidian, выбор темы в виджете сбрасывается на «auto» (следовать глобальной теме).
+module.exports = function watchObsidianTheme(ctx) {
+  if (typeof MutationObserver === "undefined" || !document.body) return () => {};
+  const isDark = () => document.body.classList.contains("theme-dark");
+  let was = isDark();
+  const mo = new MutationObserver(() => {
+    if (ctx.rootEl && ctx.rootEl.isConnected === false) { mo.disconnect(); return; } // виджет исчез
+    const now = isDark();
+    if (now !== was) { was = now; if (ctx.store.get().theme !== "auto") ctx.actions.setTheme("auto"); }
+  });
+  mo.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  return () => mo.disconnect();
+};
+
+},
+"stats/activity": function (module, exports, require) {
+// stats/activity.js — активность по дням, матрица-тепловая карта и стрик.
+const { dayKey, DAY, startOfDay } = require("lib/date");
+
+function countByDay(posts) {
+  const m = new Map();
+  for (const p of posts) { const k = dayKey(p.ts); m.set(k, (m.get(k) || 0) + 1); }
+  return m;
+}
+const level = (n, max) => (n <= 0 ? 0 : Math.min(4, Math.max(1, Math.ceil((n / Math.max(max, 1)) * 4))));
+
+// weeks столбцов × 7 строк (пн..вс); последняя колонка — текущая неделя.
+function heatmap(byDay, now, weeks = 53) {
+  const today = startOfDay(now), dow = (new Date(today).getDay() + 6) % 7;
+  const start = today - (dow + (weeks - 1) * 7) * DAY;
+  const max = Math.max(0, ...byDay.values());
+  const cols = [];
+  for (let w = 0; w < weeks; w++) {
+    const col = [];
+    for (let d = 0; d < 7; d++) {
+      const ts = start + (w * 7 + d) * DAY, key = dayKey(ts), n = byDay.get(key) || 0;
+      col.push({ key, ts, n, level: ts > today ? -1 : level(n, max) });
+    }
+    cols.push(col);
+  }
+  return cols;
+}
+
+function streak(byDay, now) {
+  let cur = 0, d = startOfDay(now);
+  if (!byDay.get(dayKey(d))) d -= DAY;
+  while (byDay.get(dayKey(d))) { cur++; d -= DAY; }
+  const keys = [...byDay.keys()].sort();
+  let best = 0, run = 0, prev = null;
+  for (const k of keys) {
+    const t = new Date(k + "T00:00:00").getTime();
+    run = prev !== null && Math.round((t - prev) / DAY) === 1 ? run + 1 : 1;
+    best = Math.max(best, run); prev = t;
+  }
+  return { current: cur, best };
+}
+// Диапазоны числа заметок за день для каждого уровня цвета (для легенды): [от, до], до=null — «и больше».
+function levelRanges(max) {
+  if (max <= 0) return [[0, 0], [1, 1], [2, 2], [3, 3], [4, null]];
+  const edges = [1, 2, 3, 4].map((l) => Math.max(1, Math.floor((max * l) / 4)));
+  const out = [[0, 0]]; let from = 1;
+  for (let l = 1; l <= 4; l++) { const to = l === 4 ? null : Math.max(from, edges[l - 1]); out.push([from, to]); if (to !== null) from = to + 1; }
+  return out;
+}
+function summary(byDay) {
+  let total = 0, best = null;
+  for (const [key, n] of byDay) { total += n; if (!best || n > best.n) best = { key, n }; }
+  return { total, activeDays: byDay.size, best };
+}
+module.exports = { countByDay, heatmap, streak, levelRanges, summary };
+
+},
+"stats/period": function (module, exports, require) {
+// stats/period.js — «Пульс месяца»: заметки, дельта, связи, медиа, плотность графа.
+const { monthKey } = require("lib/date");
+
+function monthStats(posts, now) {
+  const d = new Date(now), cur = monthKey(now), prev = monthKey(new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime());
+  const inCur = posts.filter((p) => monthKey(p.ts) === cur), inPrev = posts.filter((p) => monthKey(p.ts) === prev);
+  const links = inCur.reduce((s, p) => s + p.links, 0);
+  // files — сколько файлов добавлено (по встроенным вложениям), notes — в скольких заметках они встречаются
+  const files = { photo: 0, video: 0, audio: 0 }, notes = { photo: 0, video: 0, audio: 0 };
+  for (const p of inCur) {
+    const c = p.mediaCounts || { image: 0, video: 0, audio: 0 };
+    files.photo += c.image; files.video += c.video; files.audio += c.audio;
+    if (c.image) notes.photo++; if (c.video) notes.video++; if (c.audio) notes.audio++;
+  }
+  const isolated = inCur.filter((p) => p.links + p.backlinks === 0).length;
+  // накопительная динамика по дням текущего месяца (до сегодняшнего дня) и «консистентность»
+  const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(), elapsed = Math.min(dim, d.getDate());
+  const daily = new Array(dim).fill(0);
+  for (const p of inCur) daily[new Date(p.ts).getDate() - 1]++;
+  let acc = 0;
+  const cumulative = daily.slice(0, elapsed).map((n) => (acc += n));
+  const activeDays = daily.slice(0, elapsed).filter((n) => n > 0).length;
+  return {
+    daysInMonth: dim, elapsed, daily, cumulative, activeDays,
+    consistencyPct: elapsed ? Math.round((activeDays / elapsed) * 100) : 0,
+    count: inCur.length, prevCount: inPrev.length,
+    deltaPct: inPrev.length ? Math.round(((inCur.length - inPrev.length) / inPrev.length) * 100) : null,
+    links, density: inCur.length ? Math.round((links / inCur.length) * 10) / 10 : 0,
+    isolatedPct: inCur.length ? Math.round((isolated / inCur.length) * 100) : 0,
+    media: files, mediaNotes: notes, mediaTotal: files.photo + files.video + files.audio, posts: inCur,
+  };
+}
+module.exports = { monthStats };
+
+},
+"stats/tags": function (module, exports, require) {
+// stats/tags.js — частоты тегов.
+function tagCounts(posts, { limit = 30, exclude = [] } = {}) {
+  const m = new Map(), ex = new Set(exclude);
+  for (const p of posts) for (const t of p.tags) if (!ex.has(t)) m.set(t, (m.get(t) || 0) + 1);
+  return [...m.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)).slice(0, limit);
+}
+module.exports = { tagCounts };
+
+},
+"stats/types": function (module, exports, require) {
+// stats/types.js — распределение заметок по типам карточек.
+function typeCounts(posts) {
+  const m = new Map();
+  for (const p of posts) m.set(p.type || "text", (m.get(p.type || "text") || 0) + 1);
+  const total = posts.length || 1;
+  return [...m.entries()].map(([id, count]) => ({ id, count, pct: Math.round((count / total) * 100) })).sort((a, b) => b.count - a.count);
+}
+module.exports = { typeCounts };
+
+},
+"types/audio": function (module, exports, require) {
+module.exports = { id: "audio", label: "Voice", icon: "mic", match: (p, f) => p.mediaKinds.has("audio") || !!(f && f.byKind("audio").length) };
+
+},
+"types/canvas": function (module, exports, require) {
+module.exports = { id: "canvas", label: "Canvas", icon: "share", match: (p, f) => p.mediaKinds.has("canvas") || !!(f && f.byKind("canvas").length) };
+
+},
+"types/image": function (module, exports, require) {
+module.exports = { id: "image", label: "Photo", icon: "image", match: (p, f) => p.mediaKinds.has("image") || !!(f && f.byKind("image").length) };
+
+},
+"types/index": function (module, exports, require) {
+// types/index.js — реестр типов карточек. Порядок = приоритет автоопределения.
+const list = ["video", "audio", "canvas", "image", "quote", "tasks", "link", "text"].map((n) => require("types/" + n));
+const byId = Object.fromEntries(list.map((t) => [t.id, t]));
+const ALIASES = { voice: "audio", photo: "image", todo: "tasks", task: "tasks", citation: "quote", цитата: "quote", аудио: "audio", видео: "video", фото: "image", задачи: "tasks" };
+
+// frontmatter `type` (если известен) важнее автоопределения; f (анализ тела) может быть null.
+function resolve(post, f) {
+  const hint = ALIASES[post.typeHint] || post.typeHint;
+  if (hint && byId[hint]) return byId[hint];
+  return list.find((t) => t.match(post, f)) || byId.text;
+}
+const get = (id) => byId[id] || byId.text;
+module.exports = { list, get, resolve };
+
+},
+"types/link": function (module, exports, require) {
+// Короткая заметка-ссылка: есть внешний URL и мало текста.
+module.exports = { id: "link", label: "Link", icon: "link", match: (p, f) => !!f && f.external.length > 0 && f.words < 45 };
+
+},
+"types/quote": function (module, exports, require) {
+// Цитата: тег из config.quoteTags/«цитата» или тело, где цитаты занимают заметную часть текста.
+module.exports = {
+  id: "quote", label: "Quote", icon: "quote",
+  match: (p, f) => p.tags.some((t) => /цитат|quote/.test(t)) || (!!f && f.quotes.length > 0 && f.quoteRatio > 0.4),
+};
+
+},
+"types/tasks": function (module, exports, require) {
+module.exports = { id: "tasks", label: "Tasks", icon: "tasks", match: (p, f) => (f ? f.tasks.total : p.tasksTotal) >= 2 };
+
+},
+"types/text": function (module, exports, require) {
+module.exports = { id: "text", label: "Note", icon: "file", match: () => true };
+
+},
+"types/video": function (module, exports, require) {
+module.exports = { id: "video", label: "Video", icon: "video", match: (p, f) => p.mediaKinds.has("video") || !!(f && f.byKind("video").length) };
+
+},
+"ui/card/bodies/_excerpt": function (module, exports, require) {
+// ui/card/bodies/_excerpt.js — общий рендер текстового превью (markdown, с обрезкой и «Читать далее»).
+const { h } = require("lib/dom");
+const hookLinks = require("ui/card/links");
+const { cleanForExcerpt, truncateMarkdown } = require("lib/text");
+
+// Тело заметки без цитат/задач — чтобы не дублировать то, что уже показано отдельным блоком.
+function bodyWithout(body, { quotes = false, tasks = false } = {}) {
+  const lines = String(body || "").split(/\r?\n/).filter((l) => !(quotes && /^\s*>/.test(l)) && !(tasks && /^\s*[-*+]\s+\[[ xX]\]/.test(l)));
+  return cleanForExcerpt(lines.join("\n"));
+}
+
+async function renderExcerpt(ctx, post, feats, parent, opts = {}) {
+  const src = opts.quotes || opts.tasks ? bodyWithout(feats.body, opts) : feats.text;
+  if (!src) return null;
+  const max = opts.max || ctx.config.excerptChars;
+  const { text } = truncateMarkdown(src, max);
+  const box = h("div", { class: "sf-card__text markdown-rendered" });
+  parent.append(box);
+  await ctx.md.render(text, box, post.path);
+  hookLinks(ctx, box, post);
+  return box;
+}
+module.exports = { renderExcerpt, bodyWithout };
+
+},
+"ui/card/bodies/audio": function (module, exports, require) {
+// Аудио-заметка: плеер с «волной» (декоративной) и прогрессом.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { mulberry32 } = require("lib/random");
+const { hash } = require("lib/misc");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+const fmt = (s) => (isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}` : "0:00");
+
+async function render(ctx, post, feats, el) {
+  const m = feats.byKind("audio")[0];
+  const src = m && ctx.media.resolve(m.target, post.path);
+  if (src) {
+    const audio = h("audio", { preload: "metadata", src });
+    const time = h("span", { class: "sf-audio__time" }, "0:00");
+    const rnd = mulberry32(parseInt(hash(post.path), 36));
+    const bars = Array.from({ length: 40 }, () => h("span", { class: "sf-audio__bar", style: { height: 20 + Math.round(rnd() * 80) + "%" } }));
+    const btn = h("button", { type: "button", class: "sf-audio__btn", title: "Воспроизвести", onClick: () => (audio.paused ? audio.play() : audio.pause()) }, icon("play", { size: 16, fill: true }));
+    const wave = h("div", { class: "sf-audio__wave", onClick: (e) => { const r = wave.getBoundingClientRect(); if (audio.duration) audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration; } }, bars);
+    audio.addEventListener("loadedmetadata", () => (time.textContent = fmt(audio.duration)));
+    audio.addEventListener("play", () => btn.classList.add("is-playing"));
+    audio.addEventListener("pause", () => btn.classList.remove("is-playing"));
+    audio.addEventListener("timeupdate", () => {
+      const p = audio.duration ? audio.currentTime / audio.duration : 0;
+      bars.forEach((b, i) => b.classList.toggle("is-played", i / bars.length < p));
+      time.textContent = fmt(audio.currentTime) + " / " + fmt(audio.duration);
+    });
+    el.append(h("div", { class: "sf-audio" }, btn, wave, time, audio));
+  } else el.append(h("div", { class: "sf-media-missing" }, "Аудиофайл не найден: " + (m ? m.target : "—")));
+  await renderExcerpt(ctx, post, feats, el, { max: 260 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/canvas": function (module, exports, require) {
+// Canvas: плитка-ссылка на .canvas + текст.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+async function render(ctx, post, feats, el) {
+  const m = feats.byKind("canvas")[0];
+  if (m) {
+    const f = ctx.media.resolveFile(m.target, post.path);
+    el.append(h("a", { class: "sf-canvas", href: "#", onClick: (e) => { e.preventDefault(); ctx.openNote(f ? f.path : post.path, e); } },
+      icon("share", { size: 18 }), h("span", { class: "sf-canvas__name" }, m.target.split("/").pop()), h("span", { class: "sf-canvas__open" }, "Открыть в Canvas", icon("arrowUpRight", { size: 13 }))));
+  }
+  await renderExcerpt(ctx, post, feats, el, { max: 260 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/image": function (module, exports, require) {
+// Фото: сетка до 4 изображений с «+N».
+const { h } = require("lib/dom");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+async function render(ctx, post, feats, el) {
+  const imgs = feats.byKind("image");
+  const shown = imgs.slice(0, 4);
+  const grid = h("div", { class: ["sf-images", `sf-images--${shown.length}`] });
+  shown.forEach((m, i) => {
+    const src = ctx.media.resolve(m.target, post.path);
+    if (!src) return;
+    const cell = h("a", { class: "sf-images__cell", href: "#", onClick: (e) => { e.preventDefault(); ctx.openNote(post.path, e); } }, h("img", { src, loading: "lazy", alt: m.alt || m.target }));
+    if (i === 3 && imgs.length > 4) cell.append(h("span", { class: "sf-images__more" }, `+${imgs.length - 4}`));
+    grid.append(cell);
+  });
+  if (grid.children.length) el.append(grid);
+  await renderExcerpt(ctx, post, feats, el, { max: 300 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/index": function (module, exports, require) {
+// ui/card/bodies/index.js — тип карточки → рендер тела.
+const map = {};
+for (const id of ["text", "quote", "audio", "video", "image", "canvas", "tasks", "link"]) map[id] = require("ui/card/bodies/" + id);
+module.exports = { get: (id) => map[id] || map.text };
+
+},
+"ui/card/bodies/link": function (module, exports, require) {
+// Ссылка: превью внешнего URL (домен + адрес) + текст.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+async function render(ctx, post, feats, el) {
+  const url = feats.external[0];
+  if (url) {
+    let host = url;
+    try { host = new URL(url).hostname.replace(/^www\./, ""); } catch (e) {}
+    el.append(h("a", { class: "sf-extlink", href: url, target: "_blank", rel: "noopener" }, icon("link", { size: 16 }), h("span", { class: "sf-extlink__main" }, h("span", { class: "sf-extlink__host" }, host), h("span", { class: "sf-extlink__url" }, url)), icon("arrowUpRight", { size: 14 })));
+  }
+  await renderExcerpt(ctx, post, feats, el, { max: 220 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/quote": function (module, exports, require) {
+// Цитата: крупный блок-цитата + остальной текст.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+const { truncateMarkdown } = require("lib/text");
+const hookLinks = require("ui/card/links");
+
+async function render(ctx, post, feats, el) {
+  const q = feats.quotes[0];
+  if (q) {
+    const box = h("blockquote", { class: "sf-quote" }, icon("quote", { size: 18, cls: "sf-quote__mark" }));
+    const txt = h("div", { class: "sf-quote__text markdown-rendered" });
+    box.append(txt);
+    el.append(box);
+    await ctx.md.render(truncateMarkdown(q.text, 320).text, txt, post.path);
+    hookLinks(ctx, txt, post);
+    if (q.callout && q.callout.title) box.append(h("cite", { class: "sf-quote__cite" }, q.callout.title));
+  }
+  await renderExcerpt(ctx, post, feats, el, { quotes: true, max: 220 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/tasks": function (module, exports, require) {
+// Задачи: прогресс + первые пункты (только чтение).
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+async function render(ctx, post, feats, el) {
+  const { total, done, items } = feats.tasks;
+  el.append(h("div", { class: "sf-progress", title: `${done} из ${total}` }, h("div", { class: "sf-progress__bar", style: { width: (total ? (done / total) * 100 : 0) + "%" } })));
+  el.append(h("ul", { class: "sf-tasks" }, items.slice(0, 6).map((t) =>
+    h("li", { class: ["sf-tasks__item", t.done && "is-done"] }, h("span", { class: "sf-tasks__box" }, t.done && icon("check", { size: 11 })), h("span", null, t.text)))));
+  if (total > 6) el.append(h("div", { class: "sf-tasks__more" }, `ещё ${total - 6}…`));
+  await renderExcerpt(ctx, post, feats, el, { tasks: true, max: 220 });
+}
+module.exports = { render };
+
+},
+"ui/card/bodies/text": function (module, exports, require) {
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+module.exports = { render: (ctx, post, feats, el) => renderExcerpt(ctx, post, feats, el) };
+
+},
+"ui/card/bodies/video": function (module, exports, require) {
+// Видео-заметка: нативный <video> + превью текста.
+const { h } = require("lib/dom");
+const { renderExcerpt } = require("ui/card/bodies/_excerpt");
+
+async function render(ctx, post, feats, el) {
+  const m = feats.byKind("video")[0];
+  const src = m && ctx.media.resolve(m.target, post.path);
+  if (src) el.append(h("div", { class: "sf-video" }, h("video", { src, controls: true, preload: "metadata", playsinline: true }), h("span", { class: "sf-video__badge" }, m.target.split("/").pop())));
+  else el.append(h("div", { class: "sf-media-missing" }, "Видеофайл не найден: " + (m ? m.target : "—")));
+  await renderExcerpt(ctx, post, feats, el, { max: 280 });
+}
+module.exports = { render };
+
+},
+"ui/card/card": function (module, exports, require) {
+// ui/card/card.js — карточка поста: скелетон сразу, тело — после чтения заметки.
+const { h, clear } = require("lib/dom");
+const types = require("types");
+const header = require("ui/card/header");
+const footer = require("ui/card/footer");
+const bodies = require("ui/card/bodies");
+
+const INTERACTIVE = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "VIDEO", "AUDIO", "LABEL"]);
+// Клик по ссылке/кнопке/плееру/чипу обрабатывается самим элементом; по «пустому» месту карточки — открывает заметку.
+function isInteractive(target, root) {
+  for (let n = target; n && n !== root; n = n.parentNode) {
+    if (INTERACTIVE.has(n.tagName) || (n.classList && (n.classList.contains("sf-chip") || n.classList.contains("sf-audio__wave")))) return true;
+  }
+  return false;
+}
+const hasSelection = () => { try { const s = window.getSelection && window.getSelection(); return !!s && String(s).length > 0; } catch (e) { return false; } };
+
+module.exports = function createCard(ctx, post) {
+  const el = h("article", { class: "sf-card", dataset: { path: post.path } });
+  let loaded = false;
+  el.addEventListener("click", (e) => { if (!isInteractive(e.target, el) && !hasSelection()) ctx.openNote(post.path, e); });
+
+  function frame() {
+    clear(el);
+    el.className = ["sf-card", "is-clickable", `sf-card--${post.type}`, ctx.flags.isPinned(post) && "is-pinned", ctx.flags.isFavorite(post) && "is-fav"].filter(Boolean).join(" ");
+    const body = h("div", { class: "sf-card__body" });
+    el.append(header(ctx, post, frame));
+    if (post.hasOwnTitle) el.append(h("a", { class: "sf-card__title", href: "#", "data-href": post.path, onClick: (e) => { e.preventDefault(); ctx.openNote(post.path, e); } }, post.title));
+    el.append(body, footer(ctx, post));
+    return body;
+  }
+
+  async function hydrate() {
+    let body = frame();
+    if (!loaded) body.append(h("div", { class: "sf-skeleton" }, h("i"), h("i"), h("i")));
+    try {
+      const feats = await ctx.content.load(post);
+      if (!feats) return;
+      const before = post.type;
+      post.type = types.resolve(post, feats).id;
+      loaded = true;
+      body = frame(); // тип мог измениться — перерисовываем рамку
+      await bodies.get(post.type).render(ctx, post, feats, body);
+      if (before !== post.type) el.dataset.retyped = before;
+    } catch (e) {
+      console.error("[journal-stream] карточка", post.path, e);
+      body.append(h("div", { class: "sf-media-missing" }, "Не удалось прочитать заметку"));
+    }
+  }
+  el.sfReady = hydrate();
+  return el;
+};
+
+},
+"ui/card/footer": function (module, exports, require) {
+// ui/card/footer.js — теги (пиллы), счётчик бэклинков (кроме режима плавающего окна), время чтения, «открыть».
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const chip = require("ui/common/chip");
+const iconButton = require("ui/common/icon-button");
+const { plural } = require("lib/ru");
+
+module.exports = function cardFooter(ctx, post) {
+  const active = new Set([...ctx.store.get().filter.any, ...ctx.store.get().filter.all]);
+  const tags = post.tags.slice(0, 6);
+  // В режиме плавающего окна ссылки вперёд/назад (бэклинки) на карточке скрыты
+  const bl = ctx.store.get().popupView ? 0 : post.backlinks;
+  return h("footer", { class: "sf-card__footer" },
+    h("div", { class: "sf-card__tags" }, tags.map((t) => chip({ text: "#" + t, active: active.has(t), onClick: () => ctx.actions.tagClick(t), title: "Фильтр по тегу на этой странице" })), post.tags.length > 6 && h("span", { class: "sf-card__tagmore" }, `+${post.tags.length - 6}`)),
+    h("div", { class: "sf-card__stats" },
+      bl > 0 && h("span", { class: "sf-card__backlinks", title: "Входящие ссылки" }, icon("back", { size: 12 }), `${bl} ${plural(bl, ["бэклинк", "бэклинка", "бэклинков"])}`),
+      post.feats && h("span", { class: "sf-card__read" }, `${post.feats.readMin} мин`),
+      iconButton({ name: "arrowUpRight", title: "Открыть заметку", onClick: (e) => ctx.openNote(post.path, e) })));
+};
+
+},
+"ui/card/header": function (module, exports, require) {
+// ui/card/header.js — шапка: дата (mono) слева; тип, источник, закреп/избранное справа.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const types = require("types");
+const { fmtDateTime } = require("lib/date");
+const iconButton = require("ui/common/icon-button");
+
+module.exports = function cardHeader(ctx, post, rerender) {
+  const t = types.get(post.type);
+  const src = ctx.config.showSourceBadge && ctx.config.sources.find((s) => s.id === post.source);
+  const fav = ctx.flags.isFavorite(post), pin = ctx.flags.isPinned(post);
+  return h("header", { class: "sf-card__header" },
+    h("time", { class: "sf-card__date" }, fmtDateTime(post.ts, post.hasTime)),
+    h("div", { class: "sf-card__meta" },
+      src && h("span", { class: "sf-badge sf-badge--source" }, src.label),
+      h("span", { class: ["sf-badge", `sf-badge--${t.id}`] }, icon(t.icon, { size: 12 }), t.label),
+      iconButton({ name: "pin", title: pin ? "Открепить" : "Закрепить", active: pin, onClick: () => { ctx.flags.togglePin(post); rerender(); } }),
+      iconButton({ name: "star", title: fav ? "Убрать из избранного" : "В избранное", active: fav, fill: fav, onClick: () => { ctx.flags.toggleFavorite(post); rerender(); } })));
+};
+
+},
+"ui/card/links": function (module, exports, require) {
+// ui/card/links.js — клики по ссылкам внутри отрисованного markdown карточки:
+// • #тег → фильтр на этой странице (а не глобальный поиск Obsidian);
+// • [[заметка]] → открытие по правилам виджета (вкладка из настройки, Ctrl/Cmd — новая).
+module.exports = function hookLinks(ctx, root, post) {
+  root.addEventListener("click", (e) => {
+    let a = e.target;
+    while (a && a !== root && a.tagName !== "A") a = a.parentNode;
+    if (!a || a === root) return;
+    const cls = a.classList;
+    if (cls.contains("tag")) {
+      e.preventDefault(); e.stopPropagation();
+      ctx.actions.tagClick((a.getAttribute("href") || a.textContent || "").replace(/^#/, ""));
+    } else if (cls.contains("internal-link")) {
+      e.preventDefault(); e.stopPropagation();
+      ctx.openLink(a.getAttribute("data-href") || a.getAttribute("href") || a.textContent, post.path, e);
+    }
+  }, true);
+};
+
+},
+"ui/collections/preset-card": function (module, exports, require) {
+// ui/collections/preset-card.js — карточка смарт-подборки. Клик по карточке открывает подборку в Бенто.
+// Показывает правила, счётчик и мини-превью заметок с парой строк текста.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const chip = require("ui/common/chip");
+const richLink = require("ui/common/rich-link");
+const confirmButton = require("ui/common/confirm-button");
+const toast = require("ui/common/toast");
+const pipeline = require("filters/pipeline");
+const { ruleChips } = require("filters/presets");
+const { merge } = require("filters/state");
+const { newSeed } = require("lib/random");
+const { fmtNum, plural } = require("lib/ru");
+const { snippet } = require("lib/text");
+
+const stop = (fn) => (e) => { e.stopPropagation(); fn(e); };
+
+module.exports = function presetCard(ctx, preset, posts, { hero = false } = {}) {
+  const el = h("article", { class: ["sf-preset", "is-clickable", hero && "sf-preset--hero"], title: "Открыть подборку в Бенто", onClick: () => ctx.actions.openPreset(preset, "bento") });
+  let seed = newSeed(), expanded = false;
+
+  function draw() {
+    clear(el);
+    if (hero) el.append(h("span", { class: "sf-preset__glow" }));
+    const { list } = pipeline.run(posts, { filter: merge(preset.filter), quick: preset.quick || "all", seed }, { config: ctx.config, flags: ctx.flags });
+    const preview = list.slice(0, expanded ? 8 : 3);
+    const rows = preview.map((p) => {
+      const r = richLink(ctx, p);
+      ctx.content.load(p).then((feats) => feats && r.setExcerpt(snippet(feats.text, 170))).catch(() => {});
+      return r;
+    });
+    el.append(
+      h("header", { class: "sf-preset__head" }, h("span", { class: "sf-preset__icon" }, icon(preset.icon || "star", { size: 18 })),
+        h("div", { class: "sf-preset__titles" }, h("h3", null, preset.name), h("span", { class: "sf-preset__count" }, `${fmtNum(list.length)} ${plural(list.length, ["заметка", "заметки", "заметок"])}`)),
+        h("div", { class: "sf-preset__tools" },
+          preset.quick === "random" && h("button", { type: "button", class: "sf-iconbtn", title: "Перемешать", onClick: stop(() => { seed = newSeed(); draw(); }) }, icon("dice", { size: 15 })),
+          h("button", { type: "button", class: "sf-iconbtn", title: "Редактировать в конструкторе", onClick: stop(() => ctx.actions.editPreset(preset)) }, icon("sliders", { size: 15 })),
+          confirmButton({ title: "Удалить подборку", onConfirm: () => { ctx.presets.remove(preset.id); toast(ctx, "Подборка удалена"); ctx.reload(); } }))),
+      preset.description && h("p", { class: "sf-preset__desc" }, preset.description),
+      h("div", { class: "sf-preset__rules" }, ruleChips(preset).map((t) => chip({ text: t, kind: "rule" }))),
+      h("div", { class: "sf-preset__preview" }, rows.length ? rows : h("span", { class: "sf-muted" }, "Нет подходящих заметок")),
+      h("footer", { class: "sf-preset__foot" },
+        list.length > 3 && h("button", { type: "button", class: "sf-link", onClick: stop(() => { expanded = !expanded; draw(); }) }, expanded ? "Свернуть" : `Показать ещё ${Math.min(5, list.length - 3)}`),
+        h("span", { class: "sf-toolbar__spacer" }),
+        h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm", onClick: stop(() => ctx.actions.openPreset(preset, "stream")) }, "Лента"),
+        h("span", { class: "sf-preset__open" }, "Открыть в Бенто", icon("arrowUpRight", { size: 13 }))));
+  }
+  draw();
+  el.sfReady = Promise.resolve();
+  return el;
+};
+
+},
+"ui/common/chip": function (module, exports, require) {
+// ui/common/chip.js — чип: тег, режим, фильтр. kind: tag | not | attr | rule.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+module.exports = function chip({ text, kind = "tag", active = false, count, onClick, onRemove, title, iconName }) {
+  const el = h("span", { class: ["sf-chip", `sf-chip--${kind}`, active && "is-active", onClick && "is-clickable"], title, onClick, role: onClick ? "button" : null });
+  if (iconName) el.append(icon(iconName, { size: 12 }));
+  el.append(h("span", { class: "sf-chip__text" }, text));
+  if (count != null) el.append(h("span", { class: "sf-chip__count" }, count));
+  if (onRemove) el.append(h("span", { class: "sf-chip__x", onClick: (e) => { e.stopPropagation(); onRemove(e); } }, icon("x", { size: 11 })));
+  return el;
+};
+
+},
+"ui/common/confirm-button": function (module, exports, require) {
+// ui/common/confirm-button.js — кнопка опасного действия с подтверждением вторым кликом («Удалить?»).
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+module.exports = function confirmButton({ title = "Удалить", confirmText = "Удалить?", label, onConfirm, disabled = false, cls = "sf-iconbtn" }) {
+  let armed = false, timer = null;
+  const b = h("button", { type: "button", class: [cls, disabled && "is-disabled"], title, disabled: disabled || null });
+  function draw() {
+    clear(b);
+    b.classList.toggle("is-armed", armed);
+    if (armed) b.append(h("span", { class: "sf-confirm__text" }, confirmText));
+    else { b.append(icon("trash", { size: 14 })); if (label) b.append(h("span", null, label)); }
+  }
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (disabled) return;
+    if (!armed) { armed = true; draw(); timer = setTimeout(() => { armed = false; draw(); }, 2500); return; }
+    clearTimeout(timer); armed = false; draw(); onConfirm(e);
+  });
+  draw();
+  return b;
+};
+
+},
+"ui/common/dropdown": function (module, exports, require) {
+// ui/common/dropdown.js — выпадающее меню. render(panel, close) вызывается при каждом открытии.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+module.exports = function dropdown({ label, iconName, title, render, align = "right" }) {
+  const panel = h("div", { class: ["sf-menu", `sf-menu--${align}`], style: { display: "none" } });
+  const btn = h("button", { type: "button", class: "sf-btn sf-btn--ghost", title, onClick: () => (open ? close() : show()) }, iconName && icon(iconName, { size: 14 }), label && h("span", null, label), icon("chevron", { size: 13 }));
+  const el = h("div", { class: "sf-dropdown" }, btn, panel);
+  let open = false;
+  const onDoc = (e) => { if (!el.contains(e.target)) close(); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+
+  function show() { open = true; clear(panel); render(panel, close, show); panel.style.display = ""; if (document.addEventListener) { document.addEventListener("mousedown", onDoc); document.addEventListener("keydown", onKey); } }
+  function close() { open = false; panel.style.display = "none"; if (document.removeEventListener) { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); } }
+  // redraw — перерисовать содержимое открытого меню
+  return { el, close, redraw: () => { if (open) { clear(panel); render(panel, close, show); } } };
+};
+
+},
+"ui/common/empty": function (module, exports, require) {
+// ui/common/empty.js — пустое состояние.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+module.exports = function empty({ title, hint, action }) {
+  return h("div", { class: "sf-empty" }, icon("search", { size: 28 }), h("div", { class: "sf-empty__title" }, title), hint && h("div", { class: "sf-empty__hint" }, hint), action);
+};
+
+},
+"ui/common/icon-button": function (module, exports, require) {
+// ui/common/icon-button.js — квадратная кнопка-иконка 32×32.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+module.exports = function iconButton({ name, title, onClick, active = false, fill = false, label, cls }) {
+  const b = h("button", { type: "button", class: ["sf-iconbtn", active && "is-active", cls], title, "aria-label": title, onClick }, icon(name, { size: 16, fill }));
+  if (label) b.append(h("span", { class: "sf-iconbtn__label" }, label));
+  return b;
+};
+
+},
+"ui/common/modal": function (module, exports, require) {
+// ui/common/modal.js — модальное окно (шторка) поверх страницы: заголовок с кнопкой закрытия, прокручиваемое тело, нижняя панель.
+// Живёт в <body> (position: fixed), поэтому не зависит от overflow/transform родителей; тему и токены берёт из data-sf-theme.
+// Тело оформлено как .sf-root.is-mobile — все мобильные стили виджета работают и внутри окна.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+module.exports = function openModal(ctx, { title }) {
+  const closeCbs = [];
+  const theme = () => ctx.store.get().theme;
+  const body = h("div", { class: "sf-modal__body" });
+  const footer = h("div", { class: "sf-modal__footer" });
+  const closeBtn = h("button", { type: "button", class: "sf-iconbtn sf-modal__close", "aria-label": "Закрыть", onClick: () => close() }, icon("x", { size: 18 }));
+  const inner = h("div", { class: "sf-root sf-modal__root is-mobile", dataset: { sfTheme: theme() } }, body);
+  const sheet = h("div", { class: "sf-modal__sheet", role: "dialog", "aria-modal": "true", "aria-label": title },
+    h("div", { class: "sf-modal__head" }, h("h2", { class: "sf-modal__title" }, title), closeBtn), inner, footer);
+  const overlay = h("div", { class: "sf-modal", dataset: { sfTheme: theme() }, onClick: (e) => { if (e.target === overlay) close(); } }, sheet);
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const offTheme = ctx.store.subscribe((s) => { overlay.dataset.sfTheme = s.theme; inner.dataset.sfTheme = s.theme; }, ["theme"]);
+
+  document.body.appendChild(overlay);
+  if (document.addEventListener) document.addEventListener("keydown", onKey);
+  let closed = false;
+  function close() {
+    if (closed) return; closed = true;
+    offTheme(); if (document.removeEventListener) document.removeEventListener("keydown", onKey);
+    closeCbs.forEach((cb) => cb()); overlay.remove();
+  }
+  return { body, footer, close, onClose: (cb) => closeCbs.push(cb), el: overlay };
+};
+
+},
+"ui/common/nav": function (module, exports, require) {
+// ui/common/nav.js — верхняя панель: вкладки на всю ширину шапки + справа версия и переключатели
+// (новая вкладка, полная ширина, тема). Бренд-чип убран: он вытеснял вкладки на узких экранах.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { list } = require("views");
+const iconButton = require("ui/common/icon-button");
+const versionBadge = require("ui/common/version-badge");
+const openSettingsModal = require("ui/common/settings-modal");
+
+const resolvedTheme = (t) => (t === "auto" ? (document.body && document.body.classList && document.body.classList.contains("theme-dark") ? "dark" : "light") : t);
+
+module.exports = function nav(ctx) {
+  const el = h("nav", { class: "sf-nav", "aria-label": "Разделы" });
+  function draw() {
+    clear(el);
+    const s = ctx.store.get(), cur = s.view, dark = resolvedTheme(s.theme) === "dark";
+    const mobile = !!(ctx.rootEl && ctx.rootEl.classList.contains("is-mobile"));
+    const tabs = list.filter((v) => v.nav !== false).map((v) =>
+      h("button", { type: "button", role: "tab", "aria-selected": v.id === cur ? "true" : "false", class: ["sf-nav__tab", v.short && "has-short", v.id === cur && "is-active"], title: v.title, onClick: () => ctx.actions.enterView(v.id) },
+        h("span", { class: "sf-nav__full" }, v.title), v.short && h("span", { class: "sf-nav__short" }, v.short)));
+    if (mobile) {
+      // Телефон: только разделы (потоком, с переносом) и кнопка «Настройки» — переключатели вида/темы/вкладки внутри неё
+      el.append(h("div", { class: "sf-nav__tabs", role: "tablist" }, tabs,
+        h("button", { type: "button", class: "sf-nav__gear sf-nav__plus", "aria-label": "Новая заметка", title: "Новая заметка", onClick: () => ctx.createNote() }, icon("plus", { size: 16 })),
+        h("button", { type: "button", class: "sf-nav__gear", "aria-label": "Настройки", onClick: () => openSettingsModal(ctx) }, icon("sliders", { size: 16 }))));
+      return;
+    }
+    el.append(
+      h("div", { class: "sf-nav__tabs", role: "tablist" }, tabs),
+      h("div", { class: "sf-nav__right" },
+        h("button", { type: "button", class: "sf-newnote", title: "Создать заметку (место — в настройках плагина)", onClick: () => ctx.createNote() }, icon("plus", { size: 15 }), h("span", null, "Новая заметка")),
+        versionBadge(ctx),
+        iconButton({ name: "phone", title: s.viewMode === "mobile" ? "Мобильный вид включён — нажмите, чтобы вернуть автоопределение" : "Показать мобильный вид (один столбец)", active: s.viewMode === "mobile", onClick: () => ctx.actions.setViewMode("mobile") }),
+        iconButton({ name: "monitor", title: s.viewMode === "desktop" ? "Десктопный вид включён — нажмите, чтобы вернуть автоопределение" : "Показать десктопный вид (колонки, широкая шапка)", active: s.viewMode === "desktop", onClick: () => ctx.actions.setViewMode("desktop") }),
+        iconButton({ name: "eye", title: s.popupView ? "Заметки открываются в плавающем окне просмотра (Ctrl/Cmd+клик — в редакторе)" : "Открывать заметки в плавающем окне просмотра", active: s.popupView, onClick: () => ctx.actions.setPopupView(!s.popupView) }),
+        iconButton({ name: "newtab", title: s.openInNewTab ? "Заметки открываются в новой вкладке" : "Открывать заметки в новой вкладке", active: s.openInNewTab, onClick: () => ctx.actions.setOpenInNewTab(!s.openInNewTab) }),
+        iconButton({ name: s.fullWidth ? "shrink" : "expand", title: s.fullWidth ? "Обычная ширина" : "На всю ширину", active: s.fullWidth, cls: "sf-nav__fullbtn", onClick: () => ctx.actions.setFullWidth(!s.fullWidth) }),
+        h("button", { type: "button", class: "sf-themebtn", "aria-label": dark ? "Тёмная тема" : "Светлая тема", onClick: () => ctx.actions.setTheme(dark ? "light" : "dark") }, icon(dark ? "moon" : "sun", { size: 16 }))));
+  }
+  ctx.refreshNav = draw; // шапка зависит от мобильного режима — shell вызывает после смены вида/ширины
+  draw();
+  ctx.store.subscribe(draw, ["view", "fullWidth", "openInNewTab", "popupView", "theme", "viewMode"]);
+  return el;
+};
+
+},
+"ui/common/note-popup": function (module, exports, require) {
+// ui/common/note-popup.js — плавающее окно просмотра заметки (reading view через MarkdownRenderer) вместо открытия в редакторе.
+// Окно по центру экрана; основной контент затемнён (клик по затемнению закрывает окно).
+// Включается настройкой «Открывать заметки в плавающем окне» (кнопка-глаз в навигации). Окно одно на вид: повторное открытие
+// показывает другую заметку в том же окне. Его можно перетаскивать за заголовок и менять размер; Esc закрывает.
+// В шапке окна — дата и теги; ссылки вперёд и назад (бэклинки) в этом режиме не показываются.
+// Внутренние ссылки заметки открываются в этом же окне (кнопка «назад» — по истории), теги применяют фильтр ленты.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { fmtDateTime } = require("lib/date");
+const { stripFrontmatter } = require("lib/text");
+
+module.exports = function createNotePopup(ctx) {
+  let win = null, parts = null, history = [], overlay = null;
+
+  const fileOf = (linktext, source) => {
+    const { app } = ctx;
+    return app.vault.getAbstractFileByPath(linktext) || (app.metadataCache.getFirstLinkpathDest && app.metadataCache.getFirstLinkpathDest(String(linktext).split("#")[0], source || "")) || null;
+  };
+  const postOf = (path) => (ctx.repo.collect().find((p) => p.path === path) || null);
+
+  function close() {
+    if (!win) return;
+    if (document.removeEventListener) document.removeEventListener("keydown", onKey);
+    overlay.remove(); win = parts = overlay = null; history = [];
+  }
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+
+  function build() {
+    const back = h("button", { type: "button", class: "sf-iconbtn sf-npop__back", title: "Назад", "aria-label": "Назад", onClick: () => { history.pop(); const prev = history.pop(); if (prev) show(prev); } }, icon("arrowLeft", { size: 16 }));
+    const title = h("h2", { class: "sf-npop__title" });
+    const editBtn = h("button", { type: "button", class: "sf-iconbtn", title: "Открыть в редакторе", "aria-label": "Открыть в редакторе" }, icon("arrowUpRight", { size: 16 }));
+    const closeBtn = h("button", { type: "button", class: "sf-iconbtn", title: "Закрыть", "aria-label": "Закрыть", onClick: close }, icon("x", { size: 16 }));
+    const head = h("div", { class: "sf-npop__head" }, back, title, editBtn, closeBtn);
+    const meta = h("div", { class: "sf-npop__meta" });
+    const body = h("div", { class: "sf-npop__body markdown-preview-view markdown-rendered" });
+    const el = h("div", { class: "sf-npop sf-root", role: "dialog", "aria-label": "Просмотр заметки", dataset: { sfTheme: ctx.store.get().theme } }, head, meta, body);
+    overlay = h("div", { class: "sf-npop-overlay", dataset: { sfTheme: ctx.store.get().theme }, onClick: (e) => { if (e.target === overlay) close(); } }, el);
+    document.body.appendChild(overlay);
+    if (document.addEventListener) document.addEventListener("keydown", onKey);
+    drag(el, head);
+    const offTheme = ctx.store.subscribe((s) => { el.dataset.sfTheme = s.theme; overlay.dataset.sfTheme = s.theme; }, ["theme"]);
+    const rm = overlay.remove.bind(overlay); overlay.remove = () => { offTheme(); rm(); };
+    // клики внутри текста: внутренние ссылки — в этом же окне, теги — фильтр ленты
+    body.addEventListener("click", (e) => {
+      for (let n = e.target; n && n !== body; n = n.parentNode) {
+        if (n.tagName !== "A") continue;
+        const cls = n.classList;
+        if (cls.contains("tag")) { e.preventDefault(); const t = String(n.textContent).replace(/^#/, ""); if (t) ctx.actions.tagClick(t); return; }
+        if (cls.contains("internal-link")) { e.preventDefault(); const href = n.getAttribute("data-href") || n.getAttribute("href"); const f = fileOf(href, parts.path); if (f) show(f.path); return; }
+        return; // внешние ссылки — штатно
+      }
+    });
+    return { el, title, meta, body, editBtn, back, path: null };
+  }
+
+  function drag(el, handle) {
+    if (!handle.addEventListener) return;
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.target && e.target.closest && e.target.closest("button")) return;
+      const r = el.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+      el.style.position = "fixed"; el.style.margin = "0"; el.style.left = r.left + "px"; el.style.top = r.top + "px";
+      const move = (m) => { el.style.left = Math.max(0, Math.min(window.innerWidth - 80, m.clientX - dx)) + "px"; el.style.top = Math.max(0, Math.min(window.innerHeight - 40, m.clientY - dy)) + "px"; };
+      const up = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); };
+      document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+    });
+  }
+
+  async function show(path) {
+    const file = fileOf(path, "");
+    if (!file) { ctx.app.workspace.openLinkText(path, "", false); return; }
+    if (!win) { parts = build(); win = parts.el; }
+    parts.path = file.path;
+    if (history[history.length - 1] !== file.path) history.push(file.path);
+    parts.back.style.display = history.length > 1 ? "" : "none";
+    const post = postOf(file.path);
+    parts.title.textContent = (post && post.title) || file.basename || file.path;
+    parts.editBtn.onclick = null;
+    parts.editBtn.addEventListener("click", (e) => { const p = file.path; close(); ctx.app.workspace.openLinkText(p, "", !!(e && (e.ctrlKey || e.metaKey)) || !!ctx.store.get().openInNewTab); });
+    // шапка: дата и теги (без ссылок вперёд/назад)
+    clear(parts.meta);
+    if (post) {
+      parts.meta.append(h("span", { class: "sf-npop__date" }, fmtDateTime(post.ts, post.hasTime)));
+      for (const t of post.tags.slice(0, 8)) parts.meta.append(h("a", { class: "sf-chip sf-chip--tag is-clickable", href: "#", onClick: (e) => { e.preventDefault(); ctx.actions.tagClick(t); } }, "#" + t));
+    }
+    clear(parts.body);
+    parts.body.append(h("div", { class: "sf-skeleton" }, h("i"), h("i"), h("i")));
+    const my = (parts.token = (parts.token || 0) + 1);
+    try {
+      const raw = await ctx.app.vault.cachedRead(file);
+      if (!win || parts.token !== my) return;
+      clear(parts.body);
+      await ctx.md.render(stripFrontmatter(raw), parts.body, file.path);
+      if (parts.body.scrollTop) parts.body.scrollTop = 0;
+    } catch (e) {
+      console.error("[journal-stream] окно просмотра", e);
+      if (win) { clear(parts.body); parts.body.append(h("div", { class: "sf-media-missing" }, "Не удалось прочитать заметку")); }
+    }
+  }
+
+  ctx.onDispose(close);
+  return { open: (linktext, source) => show(fileOf(linktext, source) ? fileOf(linktext, source).path : linktext), close, isOpen: () => !!win, el: () => overlay };
+};
+
+},
+"ui/common/rich-link": function (module, exports, require) {
+// ui/common/rich-link.js — превью-ссылка на заметку: иконка типа, заголовок, пара строк текста, дата и связи.
+// Возвращённый элемент имеет метод setExcerpt(text) — текст подгружается позже, когда прочитана заметка.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const types = require("types");
+const { fmtDateTime } = require("lib/date");
+const { plural } = require("lib/ru");
+
+module.exports = function richLink(ctx, post, { excerpt } = {}) {
+  const t = types.get(post.type);
+  const meta = [fmtDateTime(post.ts, post.hasTime)];
+  if (post.backlinks && !ctx.store.get().popupView) meta.push(`${post.backlinks} ${plural(post.backlinks, ["связь", "связи", "связей"])}`);
+  const ex = h("span", { class: "sf-richlink__excerpt" }, excerpt || "");
+  const el = h("a", { class: ["sf-richlink", `sf-richlink--${t.id}`], href: "#", "data-href": post.path, onClick: (e) => { e.preventDefault(); e.stopPropagation(); ctx.openNote(post.path, e); } },
+    h("span", { class: "sf-richlink__icon" }, icon(t.icon, { size: 16 })),
+    h("span", { class: "sf-richlink__main" }, h("span", { class: "sf-richlink__title" }, post.title), ex, h("span", { class: "sf-richlink__meta" }, meta.join(" · "))),
+    h("span", { class: "sf-richlink__out" }, icon("arrowUpRight", { size: 14 })));
+  el.setExcerpt = (text) => { ex.textContent = text || ""; };
+  return el;
+};
+
+},
+"ui/common/scroll-top": function (module, exports, require) {
+// ui/common/scroll-top.js — плавающая кнопка «Наверх».
+// Раньше была position: sticky внутри виджета — она ломалась, если у какого-то родителя есть overflow (sticky цепляется за него,
+// а не за прокручиваемую область заметки). Теперь кнопка — position: fixed в <body>, а её положение (правый нижний угол
+// ПРОКРУЧИВАЕМОЙ области заметки) считается из координат контейнера прокрутки. Появляется после прокрутки вниз на 400px.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+const SHOW_AFTER = 400;
+
+module.exports = function scrollTopButton(ctx) {
+  const reg = (window.__sfFab = window.__sfFab || {});
+  if (reg[ctx.scrollKey]) reg[ctx.scrollKey].remove();   // при перерисовке блока не плодим кнопки
+
+  const wrap = h("div", { class: "sf-fab is-hidden", dataset: { sfTheme: ctx.store.get().theme } },
+    h("button", { type: "button", class: "sf-fab__btn", title: "Наверх", "aria-label": "Прокрутить вверх", onClick: () => ctx.scroll.toTop() }, icon("arrowUp", { size: 18 })));
+  document.body.appendChild(wrap);
+  reg[ctx.scrollKey] = wrap;
+
+  function place(top) {
+    const sc = ctx.scroll.scroller();
+    const alive = ctx.rootEl && ctx.rootEl.isConnected !== false;
+    const y = typeof top === "number" ? top : sc ? sc.scrollTop : 0;
+    if (sc && sc.getBoundingClientRect) {
+      const r = sc.getBoundingClientRect();
+      const vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+      if (r.width && vw) { wrap.style.right = Math.max(8, vw - r.right + 16) + "px"; wrap.style.bottom = Math.max(8, vh - r.bottom + 20) + "px"; }
+    }
+    wrap.classList.toggle("is-hidden", !(alive && sc && y > SHOW_AFTER));
+  }
+  ctx.scroll.onScroll(place);
+  const onResize = () => place();
+  if (window.addEventListener) window.addEventListener("resize", onResize);
+  ctx.store.subscribe((s) => { wrap.dataset.sfTheme = s.theme; }, ["theme"]);
+  // Виджет исчез (ушли в другую заметку) — убираем кнопку; пока жив — подстраиваем положение (панели могут сдвигаться)
+  const timer = setInterval(() => {
+    if (ctx.rootEl && ctx.rootEl.isConnected === false) { wrap.remove(); clearInterval(timer); } else place();
+  }, 1000);
+  if (ctx.onDispose) ctx.onDispose(() => { clearInterval(timer); wrap.remove(); if (window.removeEventListener) window.removeEventListener("resize", onResize); if (reg[ctx.scrollKey] === wrap) delete reg[ctx.scrollKey]; });
+  return wrap;
+};
+
+},
+"ui/common/segmented": function (module, exports, require) {
+// ui/common/segmented.js — переключатель-сегменты (Masonry / Flow / Timeline).
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+module.exports = function segmented({ options, value, onChange }) {
+  return h("div", { class: "sf-segmented", role: "tablist" },
+    options.map((o) => h("button", { type: "button", role: "tab", class: ["sf-segmented__btn", o.id === value && "is-active"], onClick: () => onChange(o.id) }, o.icon && icon(o.icon, { size: 14 }), h("span", null, o.label))));
+};
+
+},
+"ui/common/select": function (module, exports, require) {
+// ui/common/select.js — нативный select со стилями темы.
+const { h } = require("lib/dom");
+module.exports = function select({ options, value, onChange, title }) {
+  const el = h("select", { class: "sf-select", title, onChange: (e) => onChange(e.target.value) },
+    options.map((o) => h("option", { value: o.id, selected: o.id === value }, o.label)));
+  return el;
+};
+
+},
+"ui/common/settings-modal": function (module, exports, require) {
+// ui/common/settings-modal.js — «Настройки» в модальном окне (мобильная версия): вид, тема, открытие заметок, ширина, версия.
+// На телефоне эти переключатели не занимают место в шапке — там остаются только разделы.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const openModal = require("ui/common/modal");
+const { VERSION, RELEASED } = require("app/version");
+
+const KEYS = ["viewMode", "theme", "openInNewTab", "popupView", "fullWidth"];
+
+module.exports = function openSettingsModal(ctx) {
+  const modal = openModal(ctx, { title: "Настройки" });
+  const pills = (options, value, onPick) => h("div", { class: "sf-msec__row" }, options.map(([id, label, ic]) =>
+    h("button", { type: "button", class: ["sf-sortbtn", id === value && "is-asc"], onClick: () => onPick(id) }, ic && icon(ic, { size: 14 }), h("span", null, label))));
+  const toggle = (label, on, onClick, ic) => h("button", { type: "button", class: ["sf-setrow", on && "is-on"], role: "switch", "aria-checked": on ? "true" : "false", onClick },
+    icon(ic, { size: 16 }), h("span", { class: "sf-setrow__label" }, label), h("span", { class: "sf-setrow__state" }, on ? "Вкл" : "Выкл"));
+  const section = (title, ...c) => h("section", { class: "sf-msec" }, h("h3", { class: "sf-msec__title" }, title), ...c);
+
+  function draw() {
+    const s = ctx.store.get();
+    clear(modal.body);
+    modal.body.append(
+      section("Вид", pills([["auto", "Авто"], ["mobile", "Мобильный", "phone"], ["desktop", "Десктопный", "monitor"]], s.viewMode || "auto", (m) => ctx.actions.setViewModeTo(m))),
+      section("Тема", pills([["auto", "Как в Obsidian"], ["light", "Светлая", "sun"], ["dark", "Тёмная", "moon"]], s.theme, (t) => ctx.actions.setTheme(t))),
+      section("Заметки", toggle("Плавающее окно просмотра", s.popupView, () => ctx.actions.setPopupView(!s.popupView), "eye"),
+        toggle("Открывать в новой вкладке", s.openInNewTab, () => ctx.actions.setOpenInNewTab(!s.openInNewTab), "newtab"),
+        toggle("Страница на всю ширину", s.fullWidth, () => ctx.actions.setFullWidth(!s.fullWidth), "expand")),
+      section("О виджете", h("a", { class: "sf-setrow", href: "#", onClick: (e) => { e.preventDefault(); modal.close(); ctx.openChangelog(); } },
+        icon("file", { size: 16 }), h("span", { class: "sf-setrow__label" }, `Journal Stream v${VERSION}`), h("span", { class: "sf-setrow__state" }, `${RELEASED} · что нового`))));
+  }
+  draw();
+  const off = ctx.store.subscribe(draw, KEYS);
+  modal.footer.append(h("button", { type: "button", class: "sf-btn sf-btn--primary sf-modal__show", onClick: () => modal.close() }, "Готово"));
+  modal.onClose(off);
+  return modal;
+};
+
+},
+"ui/common/skeleton": function (module, exports, require) {
+// ui/common/skeleton.js — шиммеры карточек на время загрузки (вместо пустого места).
+const { h } = require("lib/dom");
+const { columnCount } = require("lib/layout");
+
+// Набор «форм» карточек: разная высота, чтобы заглушка напоминала настоящую ленту.
+const SHAPES = [
+  { media: false, lines: 4 }, { media: true, lines: 2 }, { media: false, lines: 2 }, { media: false, lines: 5 }, { media: true, lines: 3 }, { media: false, lines: 3 },
+];
+
+function skeletonCard(shape) {
+  const line = (w) => h("i", { class: "sf-shim", style: { width: w } });
+  return h("div", { class: "sf-skelcard" },
+    h("div", { class: "sf-skelcard__row" }, line("38%"), h("i", { class: "sf-shim sf-shim--pill" })),
+    line("72%"),
+    shape.media && h("i", { class: "sf-shim sf-shim--media" }),
+    Array.from({ length: shape.lines }, (_, i) => line(i === shape.lines - 1 ? "55%" : "100%")),
+    h("div", { class: "sf-skelcard__row" }, h("i", { class: "sf-shim sf-shim--pill" }), h("i", { class: "sf-shim sf-shim--pill" })));
+}
+
+// count карточек в колонках, как будет в ленте (config.columns; на телефоне одна колонка)
+module.exports = function skeletonGrid(ctx, { count = 6 } = {}) {
+  const w = (ctx.rootEl && ctx.rootEl.clientWidth) || 0;
+  const cols = columnCount(w, ctx.config, 24);
+  const grid = h("div", { class: "sf-skelgrid", "aria-hidden": "true", style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } });
+  for (let i = 0; i < count; i++) grid.append(skeletonCard(SHAPES[i % SHAPES.length]));
+  return grid;
+};
+
+},
+"ui/common/toast": function (module, exports, require) {
+// ui/common/toast.js — доступ к всплывающему уведомлению из контекста.
+module.exports = (ctx, text) => (ctx.toast ? ctx.toast(text) : console.log("[journal-stream]", text));
+
+},
+"ui/common/version-badge": function (module, exports, require) {
+// ui/common/version-badge.js — бейдж версии на странице: «v1.0.0», по клику открывает окно «История версий» (из README плагина).
+const { h } = require("lib/dom");
+const { VERSION, RELEASED } = require("app/version");
+
+module.exports = function versionBadge(ctx, { cls = "" } = {}) {
+  return h("a", { class: ["sf-version", cls], href: "#", title: `Journal Stream v${VERSION} (${RELEASED}) — история версий`,
+    onClick: (e) => { e.preventDefault(); e.stopPropagation(); ctx.openChangelog(); } }, "v" + VERSION);
+};
+
+},
+"ui/feed/bento": function (module, exports, require) {
+// ui/feed/bento.js — Bento: та же сетка, но видео и canvas занимают две колонки.
+const tileGrid = require("ui/feed/tile-grid");
+const isWide = (card) => !!(card && card.classList && (card.classList.contains("sf-card--video") || card.classList.contains("sf-card--canvas")));
+module.exports = (ctx, cards) => tileGrid(ctx, cards, { variant: "bento", wide: isWide });
+
+},
+"ui/feed/feed": function (module, exports, require) {
+// ui/feed/feed.js — лента: masonry | timeline | bento (+ пагинация «Показать ещё»).
+const { h } = require("lib/dom");
+const createCard = require("ui/card/card");
+const groupByDay = require("ui/feed/groups");
+const loadMore = require("ui/feed/load-more");
+const masonry = require("ui/feed/masonry");
+const bento = require("ui/feed/bento");
+const empty = require("ui/common/empty");
+const { toTokens } = require("filters/formula");
+
+module.exports = function feed(ctx, { posts, layout, page }) {
+  layout = layout === "flow" ? "timeline" : layout;
+  const wrap = h("section", { class: ["sf-feed", `sf-feed--${layout}`] });
+  const parts = [];
+  wrap.sfDispose = () => parts.forEach((p) => p.sfDispose && p.sfDispose());
+
+  if (!posts.length) {
+    const st = ctx.store.get(), act = [];
+    if (st.quick !== "all") act.push("режим «" + ({ today: "В этот день", random: "Рандомные", favorites: "Избранное" }[st.quick] || st.quick) + "»");
+    act.push(...toTokens(st.filter).filter((t) => t.t !== "paren" && t.t !== "op").map((t) => t.v));
+    wrap.append(empty({ title: "Ничего не найдено", hint: act.length ? "Сейчас применено: " + act.join(" · ") : "В выбранных источниках нет заметок.", action: h("button", { type: "button", class: "sf-btn", onClick: () => ctx.actions.resetFilter() }, "Сбросить фильтры") }));
+    return wrap;
+  }
+  const mobile = !!(ctx.rootEl && ctx.rootEl.classList.contains("is-mobile"));
+  const visible = posts.slice(0, (mobile ? ctx.config.pageSizeMobile || 12 : ctx.config.pageSize) * page);
+
+  if (layout === "timeline") {
+    // Timeline: колонка по дням; внутри дня — по две карточки в ряд одинаковой высоты, а если не помещаются — по одной.
+    for (const g of groupByDay(visible)) {
+      wrap.append(h("div", { class: "sf-timeline__group" },
+        h("div", { class: "sf-timeline__label" }, h("span", { class: "sf-timeline__dot" }), g.label, h("span", { class: "sf-timeline__key" }, g.date)),
+        h("div", { class: "sf-timeline__items" }, g.posts.map((p) => createCard(ctx, p)))));
+    }
+  } else {
+    const cards = visible.map((p) => createCard(ctx, p));
+    const grid = layout === "bento" ? bento(ctx, cards) : masonry(ctx, cards);
+    parts.push(grid);
+    wrap.append(grid);
+  }
+  if (posts.length > visible.length) wrap.append(loadMore({ remaining: posts.length - visible.length, onClick: () => ctx.actions.nextPage() }));
+  return wrap;
+};
+
+},
+"ui/feed/groups": function (module, exports, require) {
+// ui/feed/groups.js — группировка постов по дню (для Timeline).
+const { dayKey, relativeLabel, fmtDateLong } = require("lib/date");
+module.exports = function groupByDay(posts, now = Date.now()) {
+  const groups = [], idx = new Map();
+  for (const p of posts) {
+    const k = dayKey(p.ts);
+    if (!idx.has(k)) { const g = { key: k, label: relativeLabel(p.ts, now, false), date: fmtDateLong(p.ts), posts: [] }; idx.set(k, g); groups.push(g); }
+    idx.get(k).posts.push(p);
+  }
+  return groups;
+};
+
+},
+"ui/feed/layouts": function (module, exports, require) {
+// ui/feed/layouts.js — раскладки экрана «Лента». (Flow убран: он повторял Timeline; старое значение "flow" читается как timeline.)
+const LAYOUTS = [
+  { id: "masonry", label: "Masonry", icon: "grid" },
+  { id: "timeline", label: "Timeline", icon: "timeline" },
+];
+module.exports = { LAYOUTS };
+
+},
+"ui/feed/load-more": function (module, exports, require) {
+// ui/feed/load-more.js — кнопка «Показать ещё N».
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+module.exports = function loadMore({ remaining, onClick }) {
+  return h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-loadmore", onClick }, icon("chevron", { size: 14 }), `Показать ещё ${remaining}`);
+};
+
+},
+"ui/feed/masonry": function (module, exports, require) {
+// ui/feed/masonry.js — Masonry: равные колонки, карточки разной высоты.
+const tileGrid = require("ui/feed/tile-grid");
+module.exports = (ctx, cards) => tileGrid(ctx, cards, { variant: "masonry", wide: () => false });
+
+},
+"ui/feed/mobile-bar": function (module, exports, require) {
+// ui/feed/mobile-bar.js — мобильная шапка ленты/бенто: кнопка «Фильтры (N)» (открывает все фильтры в модальном окне),
+// число заметок и краткая сводка применённых условий. Всё остальное (поиск, подборки, теги…) — внутри окна.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { summarize } = require("filters/summary");
+const { withUnit } = require("lib/ru");
+const openFiltersModal = require("ui/filters/filters-modal");
+
+const MAX_CHIPS = 4;
+
+module.exports = function mobileBar(ctx, { posts, withLayouts, onRefresh }) {
+  let count = 0;
+  const subs = new Set();
+  const badge = h("span", { class: "sf-panel__badge" });
+  const countEl = h("span", { class: "sf-count-pill" });
+  const summaryEl = h("div", { class: "sf-msummary", role: "button", tabindex: "0" });
+  const open = () => openFiltersModal(ctx, { posts, withLayouts, onRefresh, getCount: () => count, onCount: (cb) => { subs.add(cb); return () => subs.delete(cb); } });
+  const btn = h("button", { type: "button", class: "sf-mfilter", onClick: open }, icon("filter", { size: 16 }), "Фильтры", badge);
+  summaryEl.addEventListener("click", open);
+
+  function draw() {
+    const s = ctx.store.get(), preset = s.presetId && ctx.presets.get(s.presetId);
+    const items = summarize(s, { presetName: preset && preset.name });
+    const applied = items.filter((t) => !/^(Старые сначала)$/.test(t)).length;
+    badge.textContent = applied || ""; badge.style.display = applied ? "" : "none";
+    clear(summaryEl);
+    if (!items.length) summaryEl.append(h("span", { class: "sf-msummary__none" }, "Без фильтров · сначала новые"));
+    items.slice(0, MAX_CHIPS).forEach((t) => summaryEl.append(h("span", { class: "sf-sumchip" }, t)));
+    if (items.length > MAX_CHIPS) summaryEl.append(h("span", { class: "sf-sumchip sf-sumchip--more" }, `+${items.length - MAX_CHIPS}`));
+  }
+  draw();
+  const off = ctx.store.subscribe(draw, ["filter", "quick", "presetId"]);
+
+  const el = h("div", { class: "sf-mbar" }, h("div", { class: "sf-mbar__row" }, btn, countEl), summaryEl);
+  return {
+    el,
+    setCount(n) { count = n; countEl.textContent = withUnit(n, ["заметка", "заметки", "заметок"]); subs.forEach((cb) => cb(n)); },
+    dispose: () => off(),
+  };
+};
+
+},
+"ui/feed/sort-toggle": function (module, exports, require) {
+// ui/feed/sort-toggle.js — переключатель порядка по времени: «Новые ↓» (по умолчанию, date-desc) / «Старые ↑» (date-asc).
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+
+module.exports = function sortToggle(ctx) {
+  const btn = h("button", { type: "button", class: "sf-sortbtn", onClick: () => ctx.actions.toggleSortDir() });
+  function draw() {
+    clear(btn);
+    const sort = ctx.store.get().filter.sort, asc = sort === "date-asc", other = sort !== "date-desc" && !asc;
+    btn.classList.toggle("is-asc", asc);
+    btn.title = asc ? "Сначала старые — нажмите, чтобы показать сначала новые" : "Сначала новые — нажмите, чтобы показать сначала старые";
+    btn.append(icon(asc ? "arrowUp" : "arrowDown", { size: 14 }), h("span", null, asc ? "Старые" : other ? "По дате" : "Новые"));
+  }
+  draw();
+  return { el: btn, dispose: ctx.store.subscribe(draw, ["filter"]) };
+};
+
+},
+"ui/feed/tile-grid": function (module, exports, require) {
+// ui/feed/tile-grid.js — общий движок плиток для Masonry, Bento и «Подборок».
+// Плитки позиционируются абсолютно: у каждой своя высота, а «строка» не равна самой высокой плитке.
+// Порядок — слева направо, потом сверху вниз: плитка занимает самую короткую колонку, а при равенстве
+// (в пределах допуска) — самую левую. «Широкая» плитка (wide) занимает две соседние колонки.
+const { h } = require("lib/dom");
+const { columnCount } = require("lib/layout");
+const skeletonGrid = require("ui/common/skeleton");
+
+const TOLERANCE = 14;
+
+module.exports = function tileGrid(ctx, cards, { wide = () => false, variant = "masonry" } = {}) {
+  const items = cards.map((c) => h("div", { class: "sf-tilegrid__item" }, c));
+  const skel = skeletonGrid(ctx, { count: Math.min(items.length, 6) });
+  const el = h("div", { class: ["sf-tilegrid", "is-pending", `sf-tilegrid--${variant}`] }, skel, items);
+  let dead = false, raf = null, ro = null, iro = null, lastW = 0;
+  const width = () => el.clientWidth || (el.parentNode && el.parentNode.clientWidth) || 0;
+
+  function layout() {
+    raf = null;
+    const W = width();
+    if (dead || !W) return;
+    const GAP = W < (ctx.config.singleColumnBelow ?? 560) ? 14 : 24;
+    const cols = columnCount(W, ctx.config, GAP);
+    const colW = (W - GAP * (cols - 1)) / cols;
+    const hs = new Array(cols).fill(0);
+
+    for (const item of items) {
+      const span = Math.min(cols, wide(item.firstChild) ? 2 : 1);
+      // лучшая стартовая колонка: минимальная «верхняя точка», при равенстве (допуск) — левее
+      let best = 0, bestTop = Infinity;
+      for (let c = 0; c + span <= cols; c++) {
+        const top = Math.max(...hs.slice(c, c + span));
+        if (top < bestTop - TOLERANCE) { best = c; bestTop = top; }
+      }
+      const w = colW * span + GAP * (span - 1);
+      item.style.width = w + "px";
+      item.style.left = best * (colW + GAP) + "px";
+      item.style.top = bestTop + "px";
+      const hgt = item.offsetHeight || 0;
+      for (let k = 0; k < span; k++) hs[best + k] = bestTop + hgt + GAP;
+    }
+    el.style.height = Math.max(0, Math.max(...hs) - GAP) + "px";
+    if (el.classList.contains("is-pending")) { el.classList.remove("is-pending"); skel.remove(); } // первая раскладка готова — шиммеры не нужны
+  }
+  const schedule = () => {
+    if (dead || raf) return;
+    raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(layout) : setTimeout(layout, 16);
+  };
+
+  cards.forEach((c) => c.sfReady && c.sfReady.then(schedule));
+  if (typeof ResizeObserver !== "undefined") {
+    // контейнер: реагируем только на смену ширины; плитки: на смену собственной высоты (картинки, подгрузка текста, «Показать ещё»)
+    ro = new ResizeObserver(() => { const w = width(); if (w !== lastW) { lastW = w; schedule(); } });
+    ro.observe(el);
+    iro = new ResizeObserver(schedule);
+    items.forEach((i) => iro.observe(i));
+  }
+  setTimeout(schedule, 0);
+  setTimeout(schedule, 700);
+  el.sfDispose = () => { dead = true; if (ro) ro.disconnect(); if (iro) iro.disconnect(); };
+  el.sfRelayout = schedule;
+  return el;
+};
+
+},
+"ui/feed/toolbar": function (module, exports, require) {
+// ui/feed/toolbar.js — шапка экрана как в dashboard: «Vault / …» + заголовок со счётчиком; справа — поиск, подборки,
+// раскладки, обновление.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const segmented = require("ui/common/segmented");
+const iconButton = require("ui/common/icon-button");
+const searchBar = require("ui/filters/search-bar");
+const presetsMenu = require("ui/filters/presets-menu");
+const sortToggle = require("ui/feed/sort-toggle");
+const { LAYOUTS } = require("ui/feed/layouts");
+const { withUnit } = require("lib/ru");
+const { fmtTime } = require("lib/date");
+
+module.exports = function toolbar(ctx, { title, posts, withLayouts, onRefresh }) {
+  const el = h("div", { class: "sf-toolbar" });
+  const counter = h("span", { class: "sf-counter__n" });
+  const search = searchBar(ctx, { posts });
+  const menu = presetsMenu(ctx, { posts });
+  const sort = sortToggle(ctx);
+  const counterEl = h("span", { class: "sf-count-pill" }, counter);
+  const stamp = fmtTime(Date.now());
+
+  function draw() {
+    clear(el);
+    const layout = ctx.store.get().layout;
+    el.append(
+      h("div", { class: "sf-toolbar__title" },
+        h("div", { class: "sf-crumbs" }, h("span", { class: "sf-crumbs__dot" }), "Vault / Journal Stream", h("span", { class: "sf-crumbs__sep" }, "·"), h("span", { class: "sf-crumbs__sync" }, icon("refresh", { size: 12 }), `Обновлено ${stamp}`)),
+        h("div", { class: "sf-toolbar__h1" }, h("h1", null, title), counterEl)),
+      h("div", { class: "sf-toolbar__controls" },
+        search.el, menu.el, sort.el,
+        withLayouts && segmented({ options: LAYOUTS, value: layout === "flow" ? "timeline" : layout, onChange: (id) => ctx.actions.setLayout(id) }),
+        iconButton({ name: "refresh", title: "Перечитать хранилище", onClick: onRefresh })));
+  }
+  const setCount = (n) => { counter.textContent = withUnit(n, ["заметка", "заметки", "заметок"]); };
+  draw();
+  const unsub = withLayouts ? ctx.store.subscribe(draw, ["layout"]) : () => {};
+  return { el, setCount, dispose: () => { unsub(); search.dispose(); sort.dispose(); menu.close(); } };
+};
+
+},
+"ui/filters/advanced": function (module, exports, require) {
+// ui/filters/advanced.js — расширенные условия: поиск, период, порог связей, сортировка, источники.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { PERIODS } = require("filters/periods");
+const { SORTS } = require("filters/sorters");
+const select = require("ui/common/select");
+const chip = require("ui/common/chip");
+const { debounce } = require("lib/async");
+
+module.exports = function advanced(ctx, { withSearch = false } = {}) {
+  const el = h("div", { class: "sf-advanced" });
+  const setText = debounce((v) => ctx.actions.setFilter({ text: v }), 250);
+  function draw() {
+    clear(el);
+    const f = ctx.store.get().filter;
+    const search = h("div", { class: "sf-field sf-field--grow" }, h("label", null, "Поиск"), h("div", { class: "sf-input-wrap" }, icon("search", { size: 14 }),
+      h("input", { class: "sf-input", type: "search", placeholder: "в заголовках, тегах и тексте", value: f.text, onInput: (e) => setText(e.target.value) })));
+    const period = h("div", { class: "sf-field" }, h("label", null, "Период"), select({ options: PERIODS, value: f.period, onChange: (v) => ctx.actions.setFilter({ period: v }) }));
+    const val = h("span", { class: "sf-range__val" }, f.minBacklinks > 0 ? `≥ ${f.minBacklinks}` : "любое");
+    const range = h("input", { class: "sf-range", type: "range", min: 0, max: 15, step: 1, value: f.minBacklinks, onInput: (e) => { val.textContent = +e.target.value > 0 ? `≥ ${e.target.value}` : "любое"; }, onChange: (e) => ctx.actions.setFilter({ minBacklinks: +e.target.value }) });
+    const links = h("div", { class: "sf-field" }, h("label", null, "Бэклинки"), h("div", { class: "sf-range-wrap" }, range, val));
+    const sort = h("div", { class: "sf-field" }, h("label", null, "Сортировка"), select({ options: SORTS, value: f.sort, onChange: (v) => ctx.actions.setFilter({ sort: v }) }));
+    el.append(...(withSearch ? [search] : []), period, links, sort);
+    const sources = ctx.config.sources.filter((s) => s.enabled !== false);
+    if (sources.length > 1) el.append(h("div", { class: "sf-field" }, h("label", null, "Источники"), h("div", { class: "sf-field__chips" }, sources.map((s) => chip({ text: s.label, kind: "attr", active: f.sources.includes(s.id), onClick: () => ctx.actions.toggleSource(s.id) })))));
+  }
+  draw();
+  // Перерисовываем только при внешней смене фильтра, а не при вводе (чтобы не терять фокус поля поиска).
+  let lastText = ctx.store.get().filter.text;
+  const dispose = ctx.store.subscribe((s) => { if (s.filter.text !== lastText && document.activeElement && el.contains(document.activeElement)) { lastText = s.filter.text; return; } lastText = s.filter.text; draw(); }, ["filter"]);
+  return { el, dispose };
+};
+
+},
+"ui/filters/attr-toggles": function (module, exports, require) {
+// ui/filters/attr-toggles.js — атрибуты заметок (С медиа / Фото / Видео / Аудио / Цитаты / Задачи / Со ссылками).
+// Раньше рядом был ещё ряд «Тип» — он дублировал атрибуты и убран.
+const { h, clear } = require("lib/dom");
+const { ATTRS } = require("filters/attrs");
+const chip = require("ui/common/chip");
+
+module.exports = function attrToggles(ctx) {
+  const el = h("div", { class: "sf-attrs" });
+  function draw() {
+    clear(el);
+    const f = ctx.store.get().filter;
+    el.append(h("span", { class: "sf-attrs__label" }, "Атрибуты:"));
+    for (const a of ATTRS) el.append(chip({ text: a.label, kind: "attr", iconName: a.icon, active: f.attrs.includes(a.id), onClick: () => ctx.actions.toggleAttr(a.id) }));
+  }
+  draw();
+  const dispose = ctx.store.subscribe(draw, ["filter"]);
+  return { el, dispose };
+};
+
+},
+"ui/filters/filter-panel": function (module, exports, require) {
+// ui/filters/filter-panel.js — сборка панели фильтров. variant: "stream" (сворачиваемая) | "studio" (всё раскрыто).
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const formulaBar = require("ui/filters/formula-bar");
+const tagBuilder = require("ui/filters/tag-builder");
+const attrToggles = require("ui/filters/attr-toggles");
+const advanced = require("ui/filters/advanced");
+const searchBar = require("ui/filters/search-bar");
+const { toTokens } = require("filters/formula");
+
+module.exports = function filterPanel(ctx, { posts, variant = "stream" }) {
+  const el = h("section", { class: ["sf-panel", `sf-panel--${variant}`] });
+  const parts = [formulaBar(ctx), tagBuilder(ctx, { posts }), attrToggles(ctx), advanced(ctx)];
+  const [formula, tags, attrs, adv] = parts;
+  // В конструкторе строка поиска — первой в панели (в ленте и бенто она в шапке экрана)
+  const search = variant === "studio" ? searchBar(ctx, { posts, cls: "sf-search--panel" }) : null;
+  if (search) parts.push(search);
+  let showAdv = variant === "studio";
+
+  const toggle = h("button", { type: "button", class: "sf-iconbtn sf-panel__toggle" });
+  const details = h("div", { class: "sf-panel__details" }, tags.el, attrs.el, adv.el);
+  const advWrap = adv.el;
+
+  const isMobile = () => !!(ctx.rootEl && ctx.rootEl.classList.contains("is-mobile"));
+  // collapsed: null = авто (на телефоне свёрнута, на десктопе развёрнута), true/false — выбор пользователя
+  const isCollapsed = () => { if (variant !== "stream") return false; const c = ctx.store.get().collapsed; return c === null || c === undefined ? isMobile() : c; };
+  const activeCount = () => toTokens(ctx.store.get().filter).filter((t) => t.t !== "paren" && t.t !== "op").length + (ctx.store.get().quick !== "all" ? 1 : 0);
+
+  function draw() {
+    const collapsed = isCollapsed();
+    el.classList.toggle("is-collapsed", collapsed);
+    advWrap.style.display = showAdv ? "" : "none";
+    clear(toggle);
+    const n = activeCount();
+    if (isMobile()) toggle.append(icon("filter", { size: 14 }), "Фильтры", n > 0 && h("span", { class: "sf-panel__badge" }, n), icon("chevron", { size: 13, cls: collapsed ? "" : "sf-flip" }));
+    else { toggle.append(icon("chevron", { size: 14, cls: collapsed ? "" : "sf-flip" })); toggle.title = collapsed ? "Развернуть панель" : "Свернуть панель"; } // на десктопе — только иконка
+  }
+  toggle.addEventListener("click", () => ctx.actions.setCollapsed(!isCollapsed()));
+  const advBtn = h("button", { type: "button", class: "sf-iconbtn", title: "Расширенные условия", "aria-label": "Расширенные условия", onClick: () => { showAdv = !showAdv; draw(); } }, icon("sliders", { size: 15 }));
+
+  const head = h("div", { class: "sf-panel__head" }, formula.el, variant === "stream" ? h("div", { class: "sf-panel__actions" }, advBtn, toggle) : null);
+  el.append(...(search ? [h("div", { class: "sf-panel__search" }, search.el)] : []), head, details);
+  draw();
+  const unsub = ctx.store.subscribe(draw, ["collapsed", "filter", "quick"]);
+  return { el, dispose: () => { unsub(); parts.forEach((p) => p.dispose()); } };
+};
+
+},
+"ui/filters/filters-modal": function (module, exports, require) {
+// ui/filters/filters-modal.js — «Фильтры» в модальном окне (мобильная версия): поиск и даты, режим, подборки, теги, атрибуты,
+// условия, порядок и вид. Фильтры применяются сразу; «Показать N» закрывает окно.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const openModal = require("ui/common/modal");
+const searchBar = require("ui/filters/search-bar");
+const quickbar = require("ui/filters/quickbar");
+const presetsMenu = require("ui/filters/presets-menu");
+const tagBuilder = require("ui/filters/tag-builder");
+const attrToggles = require("ui/filters/attr-toggles");
+const advanced = require("ui/filters/advanced");
+const formulaBar = require("ui/filters/formula-bar");
+const sortToggle = require("ui/feed/sort-toggle");
+const segmented = require("ui/common/segmented");
+const { LAYOUTS } = require("ui/feed/layouts");
+const { withUnit } = require("lib/ru");
+
+const section = (title, ...children) => h("section", { class: "sf-msec" }, h("h3", { class: "sf-msec__title" }, title), ...children);
+
+// onCount(cb) — подписка на число найденных заметок (возвращает функцию отписки); getCount() — текущее значение
+module.exports = function openFiltersModal(ctx, { posts, withLayouts, onRefresh, getCount, onCount }) {
+  const modal = openModal(ctx, { title: "Фильтры" });
+  const parts = [formulaBar(ctx), searchBar(ctx, { posts, cls: "sf-search--modal" }), quickbar(ctx, { posts }), presetsMenu(ctx, { posts }), tagBuilder(ctx, { posts }), attrToggles(ctx), advanced(ctx), sortToggle(ctx)];
+  const [formula, search, quick, presets, tags, attrs, adv, sort] = parts;
+
+  const layoutRow = h("div", { class: "sf-msec__row" }, sort.el);
+  let unLayout = () => {};
+  if (withLayouts) {
+    const draw = () => { const old = layoutRow.querySelector ? layoutRow.querySelector(".sf-segmented") : null; if (old) old.remove(); layoutRow.append(segmented({ options: LAYOUTS, value: ctx.store.get().layout, onChange: (id) => ctx.actions.setLayout(id) })); };
+    draw(); unLayout = ctx.store.subscribe(draw, ["layout"]);
+  }
+
+  modal.body.append(
+    section("Применено", formula.el),
+    section("Поиск и даты", search.el),
+    section("Режим", quick.el),
+    section("Подборки", presets.el),
+    section("Теги", tags.el),
+    section("Атрибуты", attrs.el),
+    section("Условия", adv.el),
+    section("Порядок и вид", layoutRow));
+
+  const showBtn = h("button", { type: "button", class: "sf-btn sf-btn--primary sf-modal__show", onClick: () => modal.close() });
+  const drawShow = () => { showBtn.textContent = `Показать ${withUnit(getCount(), ["заметку", "заметки", "заметок"])}`; };
+  drawShow();
+  const offCount = onCount(drawShow);
+  modal.footer.append(
+    h("button", { type: "button", class: "sf-btn sf-btn--ghost", onClick: () => ctx.actions.resetFilter() }, icon("refresh", { size: 14 }), "Сбросить"),
+    h("button", { type: "button", class: "sf-iconbtn sf-modal__refresh", title: "Перечитать хранилище", "aria-label": "Перечитать хранилище", onClick: () => { modal.close(); onRefresh(); } }, icon("refresh", { size: 16 })),
+    showBtn);
+
+  modal.onClose(() => { offCount(); unLayout(); parts.forEach((p) => p.dispose && p.dispose()); presets.close && presets.close(); });
+  return modal;
+};
+
+},
+"ui/filters/formula-bar": function (module, exports, require) {
+// ui/filters/formula-bar.js — живая формула фильтра с чипами, которые можно удалять.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { toTokens } = require("filters/formula");
+const { isDefault, defaultFilter } = require("filters/state");
+const chip = require("ui/common/chip");
+
+module.exports = function formulaBar(ctx) {
+  const el = h("div", { class: "sf-formula" });
+  const DEFAULTS = { period: "all", minBacklinks: 0, day: "", text: "", dateFrom: "", dateTo: "" };
+  function removeCond(t) {
+    if (t.key === "types") ctx.actions.toggleType(t.item);
+    else if (t.key === "sources") ctx.actions.toggleSource(t.item);
+    else ctx.actions.setFilter({ [t.key]: DEFAULTS[t.key] });
+  }
+  function draw() {
+    clear(el);
+    const f = ctx.store.get().filter, tokens = toTokens(f);
+    const body = h("div", { class: "sf-formula__body" });
+    const st = ctx.store.get(), preset = st.presetId && ctx.presets.get(st.presetId);
+    if (preset) body.append(chip({ text: "подборка: " + preset.name, kind: "rule", active: true, onRemove: () => ctx.actions.resetFilter() }));
+    if (st.quick !== "all") body.append(chip({ text: "режим: " + ({ today: "в этот день", random: "рандом", favorites: "избранное" }[st.quick] || st.quick), kind: "rule", active: true, onRemove: () => ctx.actions.setQuick("all") }));
+    if (!tokens.length && !preset && st.quick === "all") body.append(h("span", { class: "sf-formula__empty" }, "без условий — выберите теги ниже"));
+    for (const t of tokens) {
+      if (t.t === "paren") body.append(h("span", { class: "sf-formula__paren" }, t.v));
+      else if (t.t === "op") body.append(h("span", { class: ["sf-formula__op", `sf-formula__op--${t.v.toLowerCase()}`] }, t.v));
+      else if (t.t === "tag") body.append(chip({ text: t.v, kind: t.mode === "not" ? "not" : "tag", active: true, onRemove: () => ctx.actions.removeTag(t.tag) }));
+      else if (t.t === "cond") body.append(chip({ text: t.v, kind: "attr", active: true, onRemove: () => removeCond(t) }));
+      else body.append(chip({ text: t.v, kind: "attr", active: true, onRemove: () => ctx.actions.toggleAttr(t.attr) }));
+    }
+    el.append(body);
+    if (!isDefault(f) || ctx.store.get().quick !== "all") el.append(h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm", onClick: () => ctx.actions.setFilter(defaultFilter()) }, icon("refresh", { size: 13 }), "Сбросить"));
+  }
+  draw();
+  const dispose = ctx.store.subscribe(draw, ["filter", "quick", "presetId"]);
+  return { el, dispose };
+};
+
+},
+"ui/filters/presets-menu": function (module, exports, require) {
+// ui/filters/presets-menu.js — выпадающее меню «Подборки»: применить, удалить, сохранить текущий фильтр.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const dropdown = require("ui/common/dropdown");
+const confirmButton = require("ui/common/confirm-button");
+const pipeline = require("filters/pipeline");
+const { merge, isDefault } = require("filters/state");
+const toast = require("ui/common/toast");
+
+module.exports = function presetsMenu(ctx, { posts }) {
+  const count = (p) => pipeline.run(posts, { filter: merge(p.filter), quick: p.quick || "all", seed: 1 }, { config: ctx.config, flags: ctx.flags }).list.length;
+
+  const dd = dropdown({
+    label: "Подборки", iconName: "bookmark", title: "Сохранённые подборки",
+    render(panel, close) {
+      const s = ctx.store.get();
+      const list = ctx.presets.list();
+      panel.append(h("div", { class: "sf-menu__title" }, "Смарт-подборки"));
+      const rows = h("div", { class: "sf-menu__list" });
+      if (!list.length) rows.append(h("div", { class: "sf-menu__empty" }, "Подборок пока нет"));
+      for (const p of list) {
+        rows.append(h("div", { class: ["sf-menu__row", p.id === s.presetId && "is-active"] },
+          h("button", { type: "button", class: "sf-menu__item", onClick: () => { ctx.actions.applyPreset(p); close(); } }, icon(p.icon || "star", { size: 15 }), h("span", { class: "sf-menu__name" }, p.name), h("span", { class: "sf-menu__count" }, count(p))),
+          confirmButton({ title: "Удалить подборку", onConfirm: () => { ctx.presets.remove(p.id); if (ctx.store.get().presetId === p.id) ctx.store.set({ presetId: null }); toast(ctx, "Подборка удалена"); dd.redraw(); } })));
+      }
+      panel.append(rows);
+
+      const name = h("input", { class: "sf-input sf-input--sm", type: "text", placeholder: "Название подборки", style: { width: "100%" } });
+      const save = () => {
+        const n = name.value.trim();
+        if (!n) { name.focus(); toast(ctx, "Введите название подборки"); return; }
+        const cur = ctx.store.get();
+        ctx.presets.save({ name: n, icon: "star", description: "", quick: cur.quick, filter: cur.filter });
+        toast(ctx, `Подборка «${n}» сохранена`); dd.redraw();
+      };
+      name.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+      const unsaved = isDefault(s.filter) && s.quick === "all";
+      panel.append(h("div", { class: "sf-menu__save" },
+        h("div", { class: "sf-menu__hint" }, unsaved ? "Выберите условия — и сохраните их как подборку" : "Сохранить текущий фильтр как подборку"),
+        h("div", { class: "sf-menu__saverow" }, name, h("button", { type: "button", class: "sf-btn sf-btn--primary sf-btn--sm", onClick: save }, icon("save", { size: 13 }), "Сохранить"))),
+        h("button", { type: "button", class: "sf-menu__link", onClick: () => { ctx.actions.enterView("collections"); close(); } }, "Все подборки →"));
+    },
+  });
+  return dd;
+};
+
+},
+"ui/filters/quickbar": function (module, exports, require) {
+// ui/filters/quickbar.js — быстрые режимы: Все / В этот день / Рандомные 🎲 / Избранное (+ счётчики).
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const modes = require("filters/quick-modes");
+const { fmtNum } = require("lib/ru");
+
+module.exports = function quickbar(ctx, { posts }) {
+  const el = h("div", { class: "sf-quickbar" });
+  function draw() {
+    clear(el);
+    const { quick, seed } = ctx.store.get();
+    const c = { now: Date.now(), seed, config: ctx.config, flags: ctx.flags };
+    for (const m of modes.MODES) {
+      const n = m.id === "random" ? null : modes.count(posts, m.id, c);
+      el.append(h("button", { type: "button", class: ["sf-quick", m.id === quick && "is-active", `sf-quick--${m.id}`], onClick: () => ctx.actions.setQuick(m.id) },
+        icon(m.icon, { size: 15 }), h("span", null, m.label(c)), n != null && h("span", { class: "sf-quick__count" }, fmtNum(n))));
+    }
+    if (quick === "random") el.append(h("button", { type: "button", class: "sf-btn sf-btn--primary sf-shuffle", onClick: () => ctx.actions.shuffle() }, icon("dice", { size: 14 }), "Перемешать"));
+  }
+  draw();
+  const dispose = ctx.store.subscribe(draw, ["quick", "seed"]);
+  return { el, dispose };
+};
+
+},
+"ui/filters/search-bar": function (module, exports, require) {
+// ui/filters/search-bar.js — поиск по названию или тексту + диапазон дат (от и до).
+// Три параметра независимы: изменение ЛЮБОГО из них сразу применяет фильтр (текст — с задержкой 0,1 с, даты — мгновенно).
+// Индексация текстов идёт в фоне (autoIndex) или при первом фокусе; пока она не закончилась, рядом виден прогресс.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { debounce } = require("lib/async");
+
+module.exports = function searchBar(ctx, { posts, placeholder = "Поиск по названию или тексту…", cls = "" }) {
+  const status = h("span", { class: "sf-search__status" });
+  const apply = debounce((v) => ctx.actions.setFilter({ text: v }), 100);
+  const f0 = ctx.store.get().filter;
+
+  const input = h("input", { class: "sf-input", type: "search", placeholder, value: f0.text || "", enterkeyhint: "search",
+    onFocus: () => ctx.indexer.ensure(posts),
+    onInput: (e) => { clearBtn.style.display = e.target.value ? "" : "none"; apply(e.target.value); },
+    onKeydown: (e) => { if (e.key === "Escape") { input.value = ""; clearBtn.style.display = "none"; ctx.actions.setFilter({ text: "" }); } } });
+  const clearBtn = h("button", { type: "button", class: "sf-search__clear", title: "Очистить", style: { display: input.value ? "" : "none" }, onClick: () => { input.value = ""; clearBtn.style.display = "none"; ctx.actions.setFilter({ text: "" }); } }, icon("x", { size: 13 }));
+
+  // Даты: каждое поле применяется само по себе (событие input — при выборе даты, change — на случай браузеров, где input не приходит)
+  const dateField = (key, label) => {
+    const apply = (e) => { ctx.actions.setFilter({ [key]: e.target.value || "" }); syncDates(); };
+    const field = h("input", { class: "sf-input sf-date__input", type: "date", value: f0[key] || "", "aria-label": `Дата ${label}`, onInput: apply, onChange: apply });
+    return { field, el: h("label", { class: "sf-date" }, h("span", { class: "sf-date__label" }, label), field) };
+  };
+  const from = dateField("dateFrom", "от"), to = dateField("dateTo", "до");
+  const datesClear = h("button", { type: "button", class: "sf-search__clear sf-date__clear", title: "Сбросить даты", onClick: () => { ctx.actions.setFilter({ dateFrom: "", dateTo: "" }); } }, icon("x", { size: 13 }));
+  function syncDates() { datesClear.style.display = from.field.value || to.field.value ? "" : "none"; }
+  syncDates();
+
+  const el = h("div", { class: ["sf-search", cls] },
+    h("div", { class: "sf-input-wrap" }, icon("search", { size: 14 }), input, clearBtn),
+    h("div", { class: "sf-daterange", role: "group", "aria-label": "Диапазон дат" }, from.el, to.el, datesClear),
+    status);
+
+  const showStatus = (s) => { status.textContent = s.running ? `индексация ${s.i}/${s.n}` : ""; status.title = s.running ? "Пока тексты не проиндексированы, поиск идёт по заголовкам и тегам" : ""; };
+  showStatus(ctx.indexer.status());
+  const offIndex = ctx.indexer.onChange(showStatus);
+  // внешний сброс фильтра (формула, «Сбросить», подборка) → синхронизируем поля
+  const offStore = ctx.store.subscribe((s) => {
+    const f = s.filter;
+    if (document.activeElement !== input && input.value !== (f.text || "")) { input.value = f.text || ""; clearBtn.style.display = input.value ? "" : "none"; }
+    if (from.field.value !== (f.dateFrom || "")) from.field.value = f.dateFrom || "";
+    if (to.field.value !== (f.dateTo || "")) to.field.value = f.dateTo || "";
+    syncDates();
+  }, ["filter"]);
+  return { el, dispose: () => { offIndex(); offStore(); } };
+};
+
+},
+"ui/filters/tag-builder": function (module, exports, require) {
+// ui/filters/tag-builder.js — выбор тегов: тап по чипу ИЛИ ввод с автодополнением (режимы ANY / ALL / NOT).
+// Поле ввода — это <form>: «Ввод»/«Готово» на мобильной клавиатуре и кнопка «+» работают одинаково надёжно.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { tagCounts } = require("stats/tags");
+const { tagMode, normTag } = require("filters/state");
+const { shuffle, newSeed } = require("lib/random");
+const { DAY, sameMonthDay } = require("lib/date");
+const chip = require("ui/common/chip");
+
+const MODES = [
+  { id: "any", label: "ANY (ИЛИ)" },
+  { id: "all", label: "ALL (И)" },
+  { id: "not", label: "NOT (НЕ)" },
+];
+
+// Подсказки: сначала теги, начинающиеся с введённого, затем содержащие; внутри — по частоте.
+function suggestTags(all, query, limit = 8) {
+  const q = normTag(query);
+  if (!q) return all.slice(0, limit);
+  const starts = all.filter((t) => t.tag.startsWith(q)), has = all.filter((t) => !t.tag.startsWith(q) && t.tag.includes(q));
+  return [...starts, ...has].slice(0, limit);
+}
+
+module.exports = function tagBuilder(ctx, { posts }) {
+  const el = h("div", { class: "sf-tagbuilder" });
+  const allTags = tagCounts(posts, { limit: Infinity });
+  const limit = ctx.config.topTags;
+  let mode = "any", active = -1, shown = [], tab = "top", seed = newSeed();
+
+  // «Подкладки» с наборами тегов: что показывать чипами под полем ввода
+  const TABS = [
+    { id: "top", label: "Топ", title: "Самые частые теги" },
+    { id: "random", label: "Случайные", title: "Случайная выборка тегов — нажмите ещё раз, чтобы перемешать" },
+    { id: "year", label: "За год", title: "Самые частые теги за последние 12 месяцев" },
+    { id: "today", label: "Этот день", title: "Теги заметок, написанных в этот день в прошлые годы" },
+  ];
+  function tagSet() {
+    const now = Date.now(), thisYear = new Date(now).getFullYear();
+    if (tab === "random") return shuffle(allTags, seed).slice(0, limit);
+    if (tab === "year") return tagCounts(posts.filter((p) => p.ts >= now - 365 * DAY && p.ts <= now + DAY), { limit });
+    if (tab === "today") return tagCounts(posts.filter((p) => sameMonthDay(p.ts, now) && new Date(p.ts).getFullYear() < thisYear), { limit });
+    return allTags.slice(0, limit);
+  }
+  const EMPTY = { year: "За последние 12 месяцев заметок с тегами нет.", today: "В прошлые годы в этот день заметок с тегами нет.", random: "В выбранных источниках нет тегов.", top: "В выбранных источниках нет тегов." };
+
+  // --- постоянная часть (не перерисовывается, чтобы поле ввода не теряло фокус и клавиатура не закрывалась)
+  const modeRow = h("div", { class: "sf-tagbuilder__modes" });
+  const sug = h("div", { class: "sf-suggest", style: { display: "none" } });
+  const input = h("input", { class: "sf-input sf-input--sm sf-tagadd__input", type: "text", placeholder: "Добавить тег…", autocomplete: "off", autocapitalize: "off", autocorrect: "off", spellcheck: "false", enterkeyhint: "done" });
+
+  function hideSuggest() { sug.style.display = "none"; active = -1; }
+  function drawSuggest() {
+    clear(sug);
+    shown = suggestTags(allTags, input.value);
+    const f = ctx.store.get().filter;
+    shown.forEach((t, i) => sug.append(h("button", { type: "button", class: ["sf-suggest__item", i === active && "is-active", tagMode(f, t.tag) && "is-used"],
+      // mousedown не отдаёт фокус кнопке — поле остаётся активным (важно для мобильной клавиатуры)
+      onMousedown: (e) => e.preventDefault(), onClick: () => commit(t.tag) },
+      h("span", { class: "sf-suggest__tag" }, "#" + t.tag), h("span", { class: "sf-suggest__count" }, t.count))));
+    const typed = normTag(input.value);
+    if (typed && !allTags.some((t) => t.tag === typed)) sug.append(h("button", { type: "button", class: "sf-suggest__item sf-suggest__new", onMousedown: (e) => e.preventDefault(), onClick: () => commit(typed) }, "Добавить «#" + typed + "»"));
+    sug.style.display = sug.children.length ? "" : "none";
+  }
+  function commit(raw) {
+    const t = normTag(raw);
+    if (!t) return;
+    ctx.actions.toggleTag(mode, t);
+    input.value = ""; hideSuggest();
+    if (input.focus) input.focus();
+  }
+
+  input.addEventListener("input", () => { active = -1; drawSuggest(); });
+  input.addEventListener("focus", drawSuggest);
+  input.addEventListener("blur", () => setTimeout(hideSuggest, 160));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!shown.length) return;
+      active = (active + (e.key === "ArrowDown" ? 1 : -1) + shown.length) % shown.length;
+      drawSuggest();
+    } else if (e.key === "Escape") hideSuggest();
+  });
+  const form = h("form", { class: "sf-tagadd", autocomplete: "off", onSubmit: (e) => {
+    e.preventDefault();
+    commit(active >= 0 && shown[active] ? shown[active].tag : input.value);
+  } }, input,
+  h("button", { type: "submit", class: "sf-iconbtn sf-tagadd__btn", title: "Добавить тег" }, icon("plus", { size: 16 })), sug);
+
+  const head = h("div", { class: "sf-tagbuilder__head" }, h("span", { class: "sf-tagbuilder__title" }, "Теги"), modeRow, form);
+  const tabsEl = h("div", { class: "sf-tagtabs", role: "tablist", "aria-label": "Наборы тегов" });
+  const wrap = h("div", { class: "sf-tagbuilder__tags" });
+  el.append(head, tabsEl, wrap);
+
+  function drawModes() {
+    clear(modeRow);
+    MODES.forEach((m) => modeRow.append(h("button", { type: "button", class: ["sf-modebtn", `sf-modebtn--${m.id}`, m.id === mode && "is-active"], onClick: () => { mode = m.id; drawModes(); drawChips(); } }, m.label)));
+  }
+  function drawTabs() {
+    clear(tabsEl);
+    TABS.forEach((t) => tabsEl.append(h("button", { type: "button", role: "tab", title: t.title, "aria-selected": t.id === tab ? "true" : "false", class: ["sf-tagtab", t.id === tab && "is-active"],
+      onClick: () => { if (tab === t.id && t.id === "random") seed = newSeed(); tab = t.id; drawTabs(); drawChips(); } },
+    t.id === "random" && icon("dice", { size: 12 }), t.label)));
+  }
+  function drawChips() {
+    clear(wrap);
+    const f = ctx.store.get().filter, set = tagSet();
+    // выбранные теги всегда видны первыми (даже если их нет в выбранном наборе)
+    const selected = [...f.any, ...f.all, ...f.not].map((t) => ({ tag: t, count: (allTags.find((c) => c.tag === t) || {}).count }));
+    const rest = set.filter((c) => !selected.some((s) => s.tag === c.tag));
+    if (!set.length && !selected.length) { wrap.append(h("span", { class: "sf-muted" }, EMPTY[tab])); return; }
+    for (const { tag, count } of [...selected, ...rest]) {
+      const m = tagMode(f, tag);
+      wrap.append(chip({ text: "#" + tag, count, kind: m === "not" ? "not" : "tag", active: !!m, onClick: () => ctx.actions.toggleTag(mode, tag), title: m ? `в режиме ${m.toUpperCase()} — тап, чтобы снять` : `добавить как ${mode.toUpperCase()}` }));
+    }
+    if (!rest.length) wrap.append(h("span", { class: "sf-muted" }, EMPTY[tab]));
+  }
+  drawModes(); drawTabs(); drawChips();
+  const dispose = ctx.store.subscribe(() => { drawChips(); if (sug.style.display !== "none") drawSuggest(); }, ["filter"]);
+  return { el, dispose };
+};
+module.exports.suggestTags = suggestTags;
+
+},
+"ui/overview/charts": function (module, exports, require) {
+// ui/overview/charts.js — маленькие SVG-графики без зависимостей: спарклайн (area + линия) и кольцевая диаграмма.
+const { h } = require("lib/dom");
+const { uid } = require("lib/misc");
+
+const f = (n) => Math.round(n * 100) / 100;
+// Плавная кривая через точки (Catmull-Rom → кубические Безье)
+function smooth(pts) {
+  if (pts.length < 2) return pts.length ? `M${pts[0][0]},${pts[0][1]}` : "";
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    d += ` C${f(p1[0] + (p2[0] - p0[0]) / 6)},${f(p1[1] + (p2[1] - p0[1]) / 6)} ${f(p2[0] - (p3[0] - p1[0]) / 6)},${f(p2[1] - (p3[1] - p1[1]) / 6)} ${f(p2[0])},${f(p2[1])}`;
+  }
+  return d;
+}
+
+// values — значения по дням (первые `visible` точек), total — сколько точек занимает вся ось X (дней в месяце).
+function sparkline(values, { total = values.length, w = 200, hgt = 56, pad = 4 } = {}) {
+  const max = Math.max(1, ...values), n = Math.max(2, total);
+  const pts = values.map((v, i) => [(i / (n - 1)) * w, hgt - pad - (v / max) * (hgt - pad * 2)]);
+  const gid = uid("sg"), line = smooth(pts), last = pts[pts.length - 1] || [0, hgt - pad];
+  const box = h("div", { class: "sf-spark" });
+  box.innerHTML = `<svg viewBox="0 0 ${w} ${hgt}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<defs><linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="currentColor" stop-opacity="0.35"/><stop offset="100%" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>` +
+    (pts.length > 1 ? `<path d="${line} L${f(last[0])},${hgt} L0,${hgt} Z" fill="url(#${gid})"/><path d="${line}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" vector-effect="non-scaling-stroke"/>` : "") +
+    `</svg>`;
+  // точка «сегодня» — HTML-элементом, чтобы не искажалась при растяжении SVG
+  box.append(h("span", { class: "sf-spark__dot", style: { left: (last[0] / w) * 100 + "%", top: (last[1] / hgt) * 100 + "%" } }));
+  return box;
+}
+
+// segments: [{ id, value }] → кольцо; центр — подпись
+function donut(segments, { size = 132, thick = 16, center = "" } = {}) {
+  const total = segments.reduce((s, x) => s + x.value, 0) || 1, r = (size - thick) / 2, c = 2 * Math.PI * r;
+  let off = 0, arcs = "";
+  for (const s of segments) {
+    const len = (s.value / total) * c;
+    arcs += `<circle class="sf-donut__seg sf-donut__seg--${s.id}" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${thick}" stroke-dasharray="${f(Math.max(0, len - 2))} ${f(c - Math.max(0, len - 2))}" stroke-dashoffset="${f(-off)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>`;
+    off += len;
+  }
+  const box = h("div", { class: "sf-donut", style: { width: size + "px", height: size + "px" } });
+  box.innerHTML = `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true"><circle class="sf-donut__track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${thick}"/>${arcs}</svg>`;
+  box.append(h("div", { class: "sf-donut__center" }, center));
+  return box;
+}
+module.exports = { sparkline, donut };
+
+},
+"ui/overview/distribution": function (module, exports, require) {
+// ui/overview/distribution.js — распределение заметок по типам за год: кольцевая диаграмма + легенда (клик → лента с типом).
+const { h } = require("lib/dom");
+const { typeCounts } = require("stats/types");
+const { donut } = require("ui/overview/charts");
+const { fmtNum } = require("lib/ru");
+const { DAY } = require("lib/date");
+
+const RU = { text: "Текст", quote: "Цитаты", audio: "Аудио", video: "Видео", image: "Фото", tasks: "Задачи", link: "Ссылки", canvas: "Canvas" };
+
+module.exports = function distribution(ctx, posts, now) {
+  const year = posts.filter((p) => p.ts >= now - 365 * DAY && p.ts <= now + DAY);
+  const rows = typeCounts(year);
+  const list = h("div", { class: "sf-dist__list" }, rows.length ? rows.map((r) =>
+    h("button", { type: "button", class: "sf-dist__row", title: "Открыть в ленте", onClick: () => ctx.actions.jumpToType(r.id) },
+      h("span", { class: ["sf-dist__dot", `is-${r.id}`] }), h("span", { class: "sf-dist__name" }, RU[r.id] || r.id), h("span", { class: "sf-dist__count" }, fmtNum(r.count)), h("span", { class: "sf-dist__pct" }, r.pct + "%")))
+    : h("span", { class: "sf-muted" }, "За последний год заметок нет."));
+  return h("div", { class: "sf-card-block sf-yearly__dist" },
+    h("div", { class: "sf-block__head" }, h("div", null, h("h3", { class: "sf-block__title" }, "Типы заметок"), h("p", { class: "sf-block__sub" }, "Из чего состоит архив за последние 12 месяцев"))),
+    h("div", { class: "sf-dist" }, donut(rows.map((r) => ({ id: r.id, value: r.count })), { center: h("span", null, h("strong", null, fmtNum(year.length)), "заметок") }), list));
+};
+
+},
+"ui/overview/heatmap": function (module, exports, require) {
+// ui/overview/heatmap.js — годовая карта активности: подписи месяцев и дней недели, легенда с диапазонами, сводка.
+const { h } = require("lib/dom");
+const { heatmap, levelRanges, summary } = require("stats/activity");
+const { MONTHS_GEN, fmtDayMonth } = require("lib/date");
+const { plural, fmtNum } = require("lib/ru");
+
+const rangeLabel = ([from, to]) => (to === null ? `${from}+` : from === to ? `${from}` : `${from}–${to}`);
+
+module.exports = function activityHeatmap(ctx, byDay, now) {
+  // На телефоне — последние 26 недель (полгода): карта целиком помещается в ширину, без прокрутки. На десктопе — год.
+  const mobile = !!(ctx.rootEl && ctx.rootEl.classList.contains("is-mobile"));
+  const cols = heatmap(byDay, now, mobile ? 26 : 53), max = Math.max(0, ...byDay.values()), ranges = levelRanges(max), sum = summary(byDay);
+
+  // Одна сетка: колонка подписей дней + по колонке на неделю; строка месяцев + 7 строк дней. Ячейки квадратные и тянутся по ширине.
+  const grid = h("div", { class: "sf-heat", style: { "--cols": cols.length } });
+  ["Пн", "Ср", "Пт"].forEach((d, i) => grid.append(h("span", { class: "sf-heat__daylabel", style: { gridRow: String(2 + i * 2), gridColumn: "1" } }, d)));
+  let prev = -1;
+  cols.forEach((col, i) => {
+    const m = new Date(col[0].ts).getMonth();
+    if (m !== prev && i < cols.length - 2) grid.append(h("span", { class: "sf-heat__month", style: { gridRow: "1", gridColumn: `${i + 2} / span 3` } }, MONTHS_GEN[m].slice(0, 3)));
+    prev = m;
+    col.forEach((c, d) => grid.append(h("span", { class: ["sf-heat__cell", `lv-${c.level}`, c.n > 0 && "is-click"], style: { gridRow: String(d + 2), gridColumn: String(i + 2) },
+      title: c.level < 0 ? "" : `${c.key}: ${c.n} ${plural(c.n, ["заметка", "заметки", "заметок"])}`, onClick: c.n ? () => ctx.actions.jumpToDay(c.key) : null })));
+  });
+
+  const legend = h("div", { class: "sf-heat__legend" }, h("span", null, "Меньше"),
+    ranges.map((r, i) => h("span", { class: `sf-heat__cell lv-${i}`, title: `${rangeLabel(r)} ${plural(r[1] === null ? 5 : r[1], ["заметка", "заметки", "заметок"])} в день` })),
+    h("span", null, "Больше"));
+
+  return h("div", { class: "sf-card-block sf-yearly__heat" },
+    h("div", { class: "sf-block__head" },
+      h("div", null, h("h3", { class: "sf-block__title" }, mobile ? "Активность за полгода" : "Активность за год"),
+        h("p", { class: "sf-block__sub" }, "Каждый квадрат — один день, цвет — сколько заметок создано в этот день. Столбцы — недели (справа — текущая), строки — дни недели. Нажмите на цветной квадрат, чтобы открыть заметки этого дня.")),
+      h("div", { class: "sf-block__stat" }, h("strong", null, fmtNum(sum.total)), ` ${plural(sum.total, ["заметка", "заметки", "заметок"])} · ${fmtNum(sum.activeDays)} ${plural(sum.activeDays, ["активный день", "активных дня", "активных дней"])}`,
+        sum.best && h("span", null, `Рекорд: ${fmtDayMonth(new Date(sum.best.key + "T00:00:00").getTime())} — ${sum.best.n}`))),
+    h("div", { class: "sf-heat__wrap" }, grid), legend);
+};
+
+},
+"ui/overview/insights": function (module, exports, require) {
+// ui/overview/insights.js — «Случайные озарения»: число карточек выбирается на месте (3 / 6 / 9 / 12, запоминается).
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { shuffle, newSeed } = require("lib/random");
+const createCard = require("ui/card/card");
+const tileGrid = require("ui/feed/tile-grid");
+
+module.exports = function insights(ctx, posts) {
+  const box = h("div", { class: "sf-insights" });
+  let seed = newSeed(), grid = null;
+  const options = (ctx.config.insightsOptions && ctx.config.insightsOptions.length ? ctx.config.insightsOptions : [3, 6, 9, 12]);
+
+  function draw() {
+    if (grid) grid.sfDispose();
+    clear(box);
+    const n = ctx.store.get().insightsCount;
+    const pick = shuffle(posts, seed).slice(0, n);
+    if (!pick.length) { box.append(h("span", { class: "sf-muted" }, "Нет заметок для выборки.")); return; }
+    grid = tileGrid(ctx, pick.map((p) => createCard(ctx, p)), { variant: "masonry" });
+    box.append(grid);
+  }
+  const counts = h("div", { class: "sf-segmented sf-insights__count", title: "Сколько карточек показывать" });
+  function drawCounts() {
+    clear(counts);
+    const cur = ctx.store.get().insightsCount;
+    options.forEach((o) => counts.append(h("button", { type: "button", class: ["sf-segmented__btn", o === cur && "is-active"], onClick: () => ctx.actions.setInsightsCount(o) }, h("span", null, String(o)))));
+  }
+  drawCounts(); draw();
+  const unsub = ctx.store.subscribe(() => { drawCounts(); draw(); }, ["insightsCount"]);
+  const el = h("section", { class: "sf-section" },
+    h("div", { class: "sf-section__row" },
+      h("div", { class: "sf-section__lead" }, h("span", { class: "sf-section__dot" }), h("h2", { class: "sf-section__title" }, "Случайные озарения")),
+      h("div", { class: "sf-insights__tools" }, counts, h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm", onClick: () => { seed = newSeed(); draw(); } }, icon("dice", { size: 14 }), "Перемешать"))),
+    box);
+  return { el, dispose: () => { unsub(); if (grid) grid.sfDispose(); } };
+};
+
+},
+"ui/overview/pulse": function (module, exports, require) {
+// ui/overview/pulse.js — «Пульс месяца» как в макете: 4 карточки (график, стрик, связи, медиа) + полоса трендовых тегов.
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { MONTHS_GEN, startOfDay, dayKey, DAY } = require("lib/date");
+const { monthStats } = require("stats/period");
+const { streak } = require("stats/activity");
+const { tagCounts } = require("stats/tags");
+const { plural, fmtNum } = require("lib/ru");
+const { sparkline } = require("ui/overview/charts");
+const chip = require("ui/common/chip");
+
+const head = (iconName, label, right) => h("div", { class: "sf-pcard__head" }, h("div", null, h("p", { class: "sf-pcard__label" }, label)), right);
+const value = (v, unit, cls = "") => h("h3", { class: "sf-pcard__value" }, v, h("span", { class: ["sf-pcard__unit", cls] }, unit));
+
+module.exports = function pulse(ctx, posts, byDay, now) {
+  const d = new Date(now), ms = monthStats(posts, now), st = streak(byDay, now), mon = MONTHS_GEN[d.getMonth()];
+  const short = (day) => `${day} ${mon.slice(0, 3)}`;
+
+  // 1. Создано заметок + график накопления
+  const trend = ms.deltaPct == null ? null : h("span", { class: ["sf-pcard__trend", ms.deltaPct < 0 && "is-down"] }, icon("trend", { size: 13 }), (ms.deltaPct > 0 ? "+" : "") + ms.deltaPct + "%");
+  const c1 = h("div", { class: "sf-pcard sf-pcard--chart" },
+    head("file", "Создано заметок", trend),
+    value(fmtNum(ms.count), plural(ms.count, ["заметка", "заметки", "заметок"]), "is-tertiary"),
+    h("div", { class: "sf-pcard__body" }, sparkline(ms.cumulative, { total: ms.daysInMonth }),
+      h("div", { class: "sf-pcard__axis" }, h("span", null, short(1)), h("span", null, `накопительно · в прошлом месяце ${fmtNum(ms.prevCount)}`), h("span", null, short(ms.elapsed)))));
+
+  // 2. Стрик + последние 7 дней кружками
+  const days = Array.from({ length: 7 }, (_, i) => { const ts = startOfDay(now) - (6 - i) * DAY; return { n: byDay.get(dayKey(ts)) || 0, day: new Date(ts).getDate(), today: i === 6 }; });
+  const c2 = h("div", { class: "sf-pcard" },
+    head("flame", "Стрик регулярности", h("span", { class: "sf-pcard__badge" }, icon("flame", { size: 18 }))),
+    value(st.current, plural(st.current, ["день подряд", "дня подряд", "дней подряд"]), "is-primary"),
+    h("div", { class: "sf-pcard__body" },
+      h("div", { class: "sf-streak" }, days.map((x) => h("span", { class: ["sf-streak__day", x.n > 0 && "is-on", x.today && "is-today"], title: `${x.day} ${mon}: ${x.n} ${plural(x.n, ["заметка", "заметки", "заметок"])}` }, x.day))),
+      h("div", { class: "sf-pcard__axis" }, h("span", null, `Рекорд: ${st.best} ${plural(st.best, ["день", "дня", "дней"])}`), h("span", { class: "is-secondary" }, `${ms.consistencyPct}% консистентность`))));
+
+  // 3. Связи + плотность графа
+  const c3 = h("div", { class: "sf-pcard" },
+    head("share", "Семантические связи", h("span", { class: "sf-pcard__badge is-plain" }, icon("share", { size: 18 }))),
+    value(fmtNum(ms.links), plural(ms.links, ["связь", "связи", "связей"]), "is-tertiary"),
+    h("div", { class: "sf-pcard__body" },
+      h("div", { class: "sf-pcard__axis" }, h("span", null, "Плотность графа"), h("span", { class: "is-primary" }, `${ms.density} связей / заметка`)),
+      h("div", { class: "sf-bar" }, h("div", { class: "sf-bar__fill", style: { width: Math.min(100, (ms.density / 6) * 100) + "%" } })),
+      h("p", { class: "sf-pcard__note" }, `Изолированных заметок: ${ms.isolatedPct}%`)));
+
+  // 4. Медиа: сегментная шкала фото / видео / аудио
+  const m = ms.media, tot = Math.max(1, ms.mediaTotal);
+  const seg = (cls, n, label) => h("div", { class: ["sf-seg", cls], style: { width: (n / tot) * 100 + "%" }, title: `${n} ${label}` });
+  const leg = (cls, n, label) => h("span", { class: "sf-legend__item" }, h("span", { class: ["sf-legend__dot", cls] }), `${fmtNum(n)} ${label}`);
+  const c4 = h("div", { class: "sf-pcard" },
+    head("image", "Медиа за месяц", h("span", { class: "sf-pcard__badge is-plain" }, icon("image", { size: 18 }))),
+    value(fmtNum(ms.mediaTotal), plural(ms.mediaTotal, ["файл", "файла", "файлов"]), ""),
+    h("div", { class: "sf-pcard__body" },
+      h("div", { class: "sf-segbar" }, ms.mediaTotal ? [seg("is-photo", m.photo, "фото"), seg("is-video", m.video, "видео"), seg("is-audio", m.audio, "аудио")] : h("div", { class: "sf-seg is-empty", style: { width: "100%" } })),
+      h("div", { class: "sf-legend" }, leg("is-photo", m.photo, "фото"), leg("is-video", m.video, "видео"), leg("is-audio", m.audio, "аудио"))));
+
+  // Трендовые теги месяца
+  const tags = tagCounts(ms.posts, { limit: 10 });
+  const strip = h("div", { class: "sf-tagstrip" },
+    h("div", { class: "sf-tagstrip__label" }, icon("hash", { size: 16 }), `Трендовые теги ${mon}:`),
+    h("div", { class: "sf-tagstrip__tags" }, tags.length ? tags.map((t) => chip({ text: "#" + t.tag, count: t.count, onClick: () => ctx.actions.jumpToTag(t.tag), title: "Открыть в ленте" })) : h("span", { class: "sf-muted" }, "В этом месяце заметок с тегами пока нет.")));
+
+  return h("section", { class: "sf-section sf-pulse" },
+    h("div", { class: "sf-section__row" },
+      h("div", { class: "sf-section__lead" }, h("span", { class: "sf-section__dot is-secondary" }), h("h2", { class: "sf-section__title" }, `Пульс ${mon} ${d.getFullYear()}`), h("span", { class: "sf-pill" }, "Текущий срез")),
+      h("span", { class: "sf-section__aside" }, icon("trend", { size: 15 }), `${ms.activeDays} из ${ms.elapsed} дней с заметками`)),
+    h("div", { class: "sf-pulse__grid" }, c1, c2, c3, c4), strip);
+};
+
+},
+"ui/studio/action-bar": function (module, exports, require) {
+// ui/studio/action-bar.js — панель действий конструктора: Сбросить · Открыть · Сохранить · Сохранить как новую · Удалить.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const confirmButton = require("ui/common/confirm-button");
+const toast = require("ui/common/toast");
+
+module.exports = function actionBar(ctx, draft) {
+  const el = h("div", { class: "sf-actionbar" });
+
+  function persist(asNew) {
+    const name = (draft.name || "").trim();
+    if (!name) { toast(ctx, "Введите название подборки"); return; }
+    const s = ctx.store.get();
+    const saved = ctx.presets.save({ id: asNew ? null : draft.id, name, description: draft.description, icon: draft.icon, quick: s.quick, filter: s.filter });
+    draft.id = saved.id;
+    ctx.store.set({ presetId: saved.id });
+    toast(ctx, asNew ? "Сохранена как новая подборка" : "Подборка сохранена");
+    draw();
+  }
+
+  function draw() {
+    clear(el);
+    const saved = !!(draft.id && ctx.presets.get(draft.id));
+    el.append(
+      h("button", { type: "button", class: "sf-btn sf-btn--ghost", onClick: () => ctx.actions.resetFilter() }, icon("refresh", { size: 14 }), "Сбросить условия"),
+      h("button", { type: "button", class: "sf-btn sf-btn--ghost", onClick: () => { const s = ctx.store.get(); ctx.actions.openPreset({ id: saved ? draft.id : null, quick: s.quick, filter: s.filter }, "bento"); } }, icon("bento", { size: 14 }), "Открыть в Бенто"),
+      h("span", { class: "sf-toolbar__spacer" }),
+      confirmButton({ title: saved ? "Удалить подборку" : "Подборка ещё не сохранена", label: "Удалить", cls: "sf-btn sf-btn--danger", disabled: !saved, onConfirm: () => { ctx.presets.remove(draft.id); toast(ctx, "Подборка удалена"); ctx.actions.enterView("collections"); } }),
+      saved && h("button", { type: "button", class: "sf-btn", onClick: () => persist(true) }, icon("copy", { size: 14 }), "Сохранить как новую"),
+      h("button", { type: "button", class: "sf-btn sf-btn--primary", onClick: () => persist(false) }, icon("save", { size: 14 }), saved ? "Сохранить изменения" : "Сохранить подборку"));
+  }
+  draw();
+  return { el, redraw: draw };
+};
+
+},
+"ui/studio/dql-highlight": function (module, exports, require) {
+// ui/studio/dql-highlight.js — лёгкая подсветка DQL (без внешних библиотек).
+const { h } = require("lib/dom");
+const RE = /("(?:[^"\\]|\\.)*")|\b(TABLE|WITHOUT|ID|FROM|WHERE|AND|OR|SORT|DESC|ASC|AS|NOT)\b|\b([a-z]+)(?=\()|(\d+)/g;
+module.exports = function highlight(code) {
+  const out = []; let last = 0, m;
+  RE.lastIndex = 0;
+  while ((m = RE.exec(code))) {
+    if (m.index > last) out.push(code.slice(last, m.index));
+    const cls = m[1] ? "str" : m[2] ? "kw" : m[3] ? "fn" : "num";
+    out.push(h("span", { class: `sf-dql__${cls}` }, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < code.length) out.push(code.slice(last));
+  return out;
+};
+
+},
+"ui/studio/dql-panel": function (module, exports, require) {
+// ui/studio/dql-panel.js — сгенерированный DQL с подсветкой, копированием и пометками.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const { compile } = require("filters/dql");
+const highlight = require("ui/studio/dql-highlight");
+const { copyText } = require("lib/misc");
+const toast = require("ui/common/toast");
+
+module.exports = function dqlPanel(ctx) {
+  const el = h("section", { class: "sf-dqlpanel" });
+  function draw() {
+    clear(el);
+    const s = ctx.store.get(), { query, notes } = compile(s.filter, { config: ctx.config, quick: s.quick });
+    el.append(
+      h("div", { class: "sf-dqlpanel__head" }, h("span", null, icon("terminal", { size: 14 }), " Obsidian DQL"),
+        h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm", onClick: async () => { toast(ctx, (await copyText(query)) ? "DQL скопирован" : "Не удалось скопировать"); } }, icon("copy", { size: 13 }), "Копировать")),
+      h("pre", { class: "sf-dql" }, h("code", null, highlight(query))),
+      notes.length && h("ul", { class: "sf-dqlpanel__notes" }, notes.map((n) => h("li", null, n))));
+  }
+  draw();
+  return { el, dispose: ctx.store.subscribe(draw, ["filter", "quick"]) };
+};
+
+},
+"ui/studio/live-preview": function (module, exports, require) {
+// ui/studio/live-preview.js — живой отклик хранилища: число совпадений, время выполнения, первые заметки.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const pipeline = require("filters/pipeline");
+const richLink = require("ui/common/rich-link");
+const { fmtNum } = require("lib/ru");
+
+module.exports = function livePreview(ctx, posts) {
+  const el = h("section", { class: "sf-livepreview" });
+  function draw() {
+    clear(el);
+    const t0 = performance.now();
+    const { list } = pipeline.run(posts, ctx.store.get(), { config: ctx.config, flags: ctx.flags });
+    const ms = Math.max(0.1, performance.now() - t0).toFixed(1);
+    el.append(
+      h("div", { class: "sf-livepreview__head" }, h("span", { class: "sf-counter" }, h("span", { class: "sf-counter__dot" }), `Найдено: ${fmtNum(list.length)}`), h("span", { class: "sf-muted" }, icon("clock", { size: 12 }), ` ${ms} мс`)),
+      h("div", { class: "sf-livepreview__list" }, list.slice(0, 6).map((p) => richLink(ctx, p)), !list.length && h("span", { class: "sf-muted" }, "Ничего не найдено")));
+  }
+  draw();
+  return { el, dispose: ctx.store.subscribe(draw, ["filter", "quick", "seed"]) };
+};
+
+},
+"ui/studio/meta-panel": function (module, exports, require) {
+// ui/studio/meta-panel.js — метаданные подборки: название, описание, быстрый режим, иконка.
+const { h, clear } = require("lib/dom");
+const { icon } = require("lib/icons");
+const modes = require("filters/quick-modes");
+const select = require("ui/common/select");
+
+const ICONS = ["bolt", "mic", "video", "quote", "history", "dice", "star", "hash", "file", "link", "tasks", "image", "share"];
+
+module.exports = function metaPanel(ctx, draft) {
+  const el = h("section", { class: "sf-meta" });
+  function draw() {
+    clear(el);
+    const quick = ctx.store.get().quick;
+    el.append(
+      h("div", { class: "sf-field sf-field--grow" }, h("label", null, "Название подборки"), h("input", { class: "sf-input", type: "text", value: draft.name, placeholder: "Например: Инженерные инсайты", onInput: (e) => (draft.name = e.target.value) })),
+      h("div", { class: "sf-field sf-field--grow" }, h("label", null, "Описание"), h("input", { class: "sf-input", type: "text", value: draft.description, onInput: (e) => (draft.description = e.target.value) })),
+      h("div", { class: "sf-field" }, h("label", null, "Режим"), select({ options: modes.MODES.map((m) => ({ id: m.id, label: m.label({ now: Date.now() }) })), value: quick, onChange: (v) => ctx.actions.setQuick(v) })),
+      h("div", { class: "sf-field" }, h("label", null, "Иконка"), h("div", { class: "sf-iconpick" }, ICONS.map((i) => h("button", { type: "button", class: ["sf-iconbtn", i === draft.icon && "is-active"], onClick: () => { draft.icon = i; draw(); } }, icon(i, { size: 15 }))))));
+  }
+  draw();
+  return { el, dispose: ctx.store.subscribe(draw, ["quick"]) };
+};
+
+},
+"views/bento": function (module, exports, require) {
+// views/bento.js — «Бенто»: асимметричная сетка с акцентными карточками (видео 2×1, аудио 1×1 …).
+module.exports = require("views/feed-view")({ id: "bento", title: "Бенто", icon: "bento", fixedLayout: "bento" });
+
+},
+"views/collections": function (module, exports, require) {
+// views/collections.js — «Подборки»: плитки в той же сетке, что и Бенто (первая подборка — «герой» на 2 колонки).
+const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
+const presetCard = require("ui/collections/preset-card");
+const tileGrid = require("ui/feed/tile-grid");
+const { plural } = require("lib/ru");
+const { fmtTime } = require("lib/date");
+
+module.exports = {
+  id: "collections", title: "Подборки", icon: "star",
+  async render(ctx, el) {
+    const posts = ctx.repo.collect(), list = ctx.presets.list();
+    const cards = list.map((p, i) => presetCard(ctx, p, posts, { hero: i === 0 }));
+    const grid = tileGrid(ctx, cards, { variant: "bento", wide: (c) => !!(c && c.classList && c.classList.contains("sf-preset--hero")) });
+    el.append(
+      h("div", { class: "sf-hero sf-hero--row" },
+        h("div", { class: "sf-toolbar__title" },
+          h("div", { class: "sf-crumbs" }, h("span", { class: "sf-crumbs__dot" }), "Vault / Query Engine", h("span", { class: "sf-crumbs__sep" }, "·"), h("span", { class: "sf-crumbs__sync" }, icon("refresh", { size: 12 }), `Обновлено ${fmtTime(Date.now())}`)),
+          h("div", { class: "sf-toolbar__h1" }, h("h1", null, "Сохранённые фильтры"), h("span", { class: "sf-count-pill" }, `${list.length} ${plural(list.length, ["подборка", "подборки", "подборок"])}`))),
+        h("button", { type: "button", class: "sf-btn sf-btn--primary", onClick: () => ctx.actions.newPreset() }, icon("plus", { size: 14 }), "Новый смарт-фильтр")),
+      grid);
+    return () => grid.sfDispose();
+  },
+};
+
+},
+"views/feed-view": function (module, exports, require) {
+// views/feed-view.js — фабрика экранов-лент (Лента, Бенто): тулбар (поиск, подборки) + быстрые режимы + фильтры + лента.
+const { h, clear } = require("lib/dom");
+const toolbar = require("ui/feed/toolbar");
+const quickbar = require("ui/filters/quickbar");
+const filterPanel = require("ui/filters/filter-panel");
+const feed = require("ui/feed/feed");
+const pipeline = require("filters/pipeline");
+const mobileBar = require("ui/feed/mobile-bar");
+
+module.exports = function createFeedView({ id, title, icon, fixedLayout }) {
+  return {
+    id, title, icon,
+    async render(ctx, el) {
+      const { store, config } = ctx;
+      const posts = ctx.repo.collect();
+
+      const refresh = () => { ctx.repo.refresh(); ctx.content.clear(); ctx.indexer.reset(); ctx.reload(); };
+      // Мобильная версия: освобождаем экран — только «Фильтры» (всё в модальном окне) и краткая сводка; иначе — шапка, режимы, панель.
+      const mobile = !!(ctx.rootEl && ctx.rootEl.classList.contains("is-mobile"));
+      const top = mobile
+        ? (() => { const b = mobileBar(ctx, { posts, withLayouts: !fixedLayout, onRefresh: refresh }); return { els: [b.el], setCount: b.setCount, dispose: b.dispose }; })()
+        : (() => {
+          const tb = toolbar(ctx, { title, posts, withLayouts: !fixedLayout, onRefresh: refresh });
+          const qb = quickbar(ctx, { posts }), fp = filterPanel(ctx, { posts, variant: "stream" });
+          return { els: [tb.el, qb.el, fp.el], setCount: tb.setCount, dispose: () => { tb.dispose(); qb.dispose(); fp.dispose(); } };
+        })();
+      const region = h("div", { class: "sf-feed-region" });
+      el.append(...top.els, region);
+
+      let current = null;
+      let keepTimer = null;
+      function drawFeed() {
+        const s = store.get();
+        // Пока лента перестраивается, держим прежнюю высоту — иначе страница «схлопывается» и прокрутка прыгает вверх.
+        const prevH = region.offsetHeight;
+        if (prevH) { region.style.minHeight = prevH + "px"; clearTimeout(keepTimer); keepTimer = setTimeout(() => { region.style.minHeight = ""; }, 700); }
+        const { list } = pipeline.run(posts, s, { config, flags: ctx.flags });
+        top.setCount(list.length);
+        if (current && current.sfDispose) current.sfDispose();
+        clear(region);
+        current = feed(ctx, { posts: list, layout: fixedLayout || s.layout, page: s.page });
+        region.append(current);
+      }
+      drawFeed();
+      let unsub = store.subscribe(drawFeed, ["filter", "quick", "seed", "layout", "page"]);
+
+      // Фоновая индексация текстов (поиск по тексту, точные типы/цитаты): сразу при deepScan, иначе — когда браузер свободен
+      if (config.deepScan || config.autoIndex !== false) {
+        const start = () => ctx.indexer.ensure(posts).then(drawFeed).catch((e) => console.warn("[journal-stream] индексация", e));
+        const t = setTimeout(start, config.deepScan ? 0 : 600);
+        const prev = unsub;
+        unsub = () => { clearTimeout(t); prev(); };
+      }
+      return () => { clearTimeout(keepTimer); unsub(); if (current && current.sfDispose) current.sfDispose(); top.dispose(); };
+    },
+  };
+};
+
+},
+"views/index": function (module, exports, require) {
+// views/index.js — реестр экранов (порядок = порядок вкладок).
+const list = ["overview", "stream", "bento", "collections", "studio"].map((n) => require("views/" + n));
+const get = (id) => list.find((v) => v.id === id) || list[1];
+module.exports = { list, get };
+
+},
+"views/overview": function (module, exports, require) {
+// views/overview.js — «Обзор» по макету: пульс месяца с графиками, случайные озарения, годовая карта активности + типы.
+const { h } = require("lib/dom");
+const { countByDay } = require("stats/activity");
+const { fmtNum } = require("lib/ru");
+const pulse = require("ui/overview/pulse");
+const activityHeatmap = require("ui/overview/heatmap");
+const distribution = require("ui/overview/distribution");
+const insights = require("ui/overview/insights");
+
+module.exports = {
+  id: "overview", title: "Обзор", icon: "grid",
+  async render(ctx, el) {
+    const posts = ctx.repo.collect(), now = Date.now(), byDay = countByDay(posts);
+    const links = posts.reduce((s, p) => s + p.links, 0);
+    const ins = insights(ctx, posts);
+    el.append(
+      h("div", { class: "sf-hero" }, h("h1", null, "Обзор хранилища"), h("p", null, `${fmtNum(posts.length)} заметок и ${fmtNum(links)} исходящих связей`)),
+      pulse(ctx, posts, byDay, now),
+      ins.el,
+      h("section", { class: "sf-section" },
+        h("div", { class: "sf-section__row" }, h("div", { class: "sf-section__lead" }, h("span", { class: "sf-section__dot is-tertiary" }), h("h2", { class: "sf-section__title" }, "Годовой срез мыслей"))),
+        h("div", { class: "sf-yearly" }, activityHeatmap(ctx, byDay, now), distribution(ctx, posts, now))));
+    return () => ins.dispose();
+  },
+};
+
+},
+"views/stream": function (module, exports, require) {
+// views/stream.js — «Лента»: Masonry / Flow / Timeline.
+module.exports = require("views/feed-view")({ id: "stream", title: "Лента", icon: "rows" });
+
+},
+"views/studio": function (module, exports, require) {
+// views/studio.js — «Фильтры · DQL»: конструктор. Каждый вход через навигацию начинается с НОВОГО конструктора;
+// редактирование существующей подборки открывается из «Подборок».
+const { h } = require("lib/dom");
+const filterPanel = require("ui/filters/filter-panel");
+const metaPanel = require("ui/studio/meta-panel");
+const actionBar = require("ui/studio/action-bar");
+const dqlPanel = require("ui/studio/dql-panel");
+const livePreview = require("ui/studio/live-preview");
+
+module.exports = {
+  id: "studio", title: "Фильтры · DQL", short: "Конструктор", icon: "code",
+  async render(ctx, el) {
+    const posts = ctx.repo.collect();
+    let draft = ctx.store.get().draft;
+    if (!draft) { draft = ctx.actions.newDraft(); ctx.store.set({ draft }); }
+
+    const bar = actionBar(ctx, draft);
+    const meta = metaPanel(ctx, draft);
+    const panel = filterPanel(ctx, { posts, variant: "studio" });
+    const live = livePreview(ctx, posts);
+    const dql = dqlPanel(ctx);
+
+    el.append(
+      h("div", { class: "sf-hero" },
+        h("h1", null, draft.id ? "Редактирование подборки" : "Новый смарт-фильтр"),
+        h("p", null, "Соберите условия мышкой — справа появится готовый запрос (DQL для Dataview — по желанию)")),
+      bar.el,
+      h("div", { class: "sf-studio" },
+        h("div", { class: "sf-studio__main" }, meta.el, panel.el),
+        h("aside", { class: "sf-studio__side" }, live.el, dql.el)));
+    return () => [meta, panel, live, dql].forEach((p) => p.dispose());
+  },
+};
+
+}
+  },
+  css: {"00-tokens.css":"/* 00-tokens.css — дизайн-токены по dashboard.html (тональные слои без рамок). Тёмная и светлая темы.\n   Всё оформление берётся отсюда. Тема: config.theme / кнопка в навигации; auto — по теме Obsidian. */\n.sf-root, .sf-fab, .sf-modal {\n  /* светлая тема (вариация той же палитры) */\n  --sf-canvas: #fbf8fd;            /* surface */\n  --sf-surface: #f5f2f8;           /* surface-container-low — карточки */\n  --sf-surface-2: #efecf2;         /* surface-container — вложенные блоки */\n  --sf-surface-3: #e9e6ec;         /* surface-container-high — hover вложенных */\n  --sf-surface-4: #e3e1e6;         /* surface-container-highest — активные вкладки */\n  --sf-surface-hover: #efecf2;     /* hover карточки: на ступень темнее */\n  --sf-line: rgba(77, 67, 84, 0.16);\n  --sf-text: #1b1b1d;              /* on-surface */\n  --sf-text-2: #4d4354;            /* on-surface-variant */\n  --sf-text-3: #7e7387;            /* outline */\n  --sf-primary: #842bd2;           /* текст/иконки акцента */\n  --sf-primary-hover: #6900b3;\n  --sf-primary-soft: rgba(132, 43, 210, 0.08);\n  --sf-primary-line: rgba(132, 43, 210, 0.28);\n  --sf-primary-fill: #842bd2;      /* заливка главной кнопки */\n  --sf-primary-on: #ffffff;\n  --sf-accent-grad: linear-gradient(135deg, #8f45e0 0%, #6a1fb5 100%);               /* заливка активных кнопок */\n  --sf-accent-soft: linear-gradient(135deg, rgba(132, 43, 210, 0.16), rgba(132, 43, 210, 0.04)); /* неактивные кнопки */\n  --sf-secondary: #6001d1;\n  --sf-secondary-container: #eaddff;\n  --sf-on-secondary-container: #25005a;\n  --sf-secondary-soft: rgba(96, 1, 209, 0.07);\n  --sf-tint: var(--sf-primary-soft);   /* оттенок градиента карточки; у типов (аудио, видео…) переопределяется */\n  --sf-tertiary: #00658a;\n  --sf-tertiary-soft: rgba(0, 101, 138, 0.1);\n  --sf-danger: #ba1a1a;\n  --sf-danger-soft: rgba(186, 26, 26, 0.1);\n  --sf-glow: 0 6px 24px -4px rgba(132, 43, 210, 0.18);\n  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);\n  --sf-heat-0: #ebe7ef; --sf-heat-1: #e0d0f5; --sf-heat-2: #c29cf0; --sf-heat-3: #a468e6; --sf-heat-4: #842bd2;\n\n  --sf-r: 0.5rem;          /* lg: поля, кнопки */\n  --sf-r-sm: 0.25rem;      /* DEFAULT: чипы-правила */\n  --sf-r-lg: 0.75rem;      /* xl: вложенные блоки */\n  --sf-r-xl: 1rem;         /* 2xl: карточки */\n  --sf-r-pill: 9999px;\n  --sf-gutter: 1rem;\n  --sf-gutter-lg: 1.5rem;\n  --sf-pad: 1.25rem;\n  --sf-quote-size: calc(17px / 1.5); /* размер текста цитаты: прежние 17px, уменьшенные в 1.5 раза */\n\n  --sf-font-head: \"Geist\", \"Inter\", var(--font-interface), system-ui, sans-serif;\n  --sf-font-body: \"Inter\", var(--font-text), system-ui, sans-serif;\n  --sf-font-mono: \"JetBrains Mono\", var(--font-monospace), ui-monospace, SFMono-Regular, Menlo, monospace;\n}\n\n.sf-root[data-sf-theme=\"dark\"], .sf-fab[data-sf-theme=\"dark\"], .sf-modal[data-sf-theme=\"dark\"],\nbody.theme-dark .sf-root[data-sf-theme=\"auto\"], body.theme-dark .sf-fab[data-sf-theme=\"auto\"], body.theme-dark .sf-modal[data-sf-theme=\"auto\"] {\n  --sf-canvas: #131315;\n  --sf-surface: #1b1b1d;\n  --sf-surface-2: #1f1f21;\n  --sf-surface-3: #2a2a2c;\n  --sf-surface-4: #353437;\n  --sf-surface-hover: #1f1f21;\n  --sf-line: rgba(77, 67, 84, 0.5);\n  --sf-text: #e4e2e4;\n  --sf-text-2: #cfc2d6;\n  --sf-text-3: #988d9f;\n  --sf-primary: #ddb7ff;\n  --sf-primary-hover: #f0dbff;\n  --sf-primary-soft: rgba(221, 183, 255, 0.1);\n  --sf-primary-line: rgba(221, 183, 255, 0.28);\n  --sf-primary-fill: #ddb7ff;\n  --sf-primary-on: #490080;\n  --sf-accent-grad: linear-gradient(135deg, #f0dbff 0%, #ddb7ff 45%, #b76dff 100%);\n  --sf-accent-soft: linear-gradient(135deg, rgba(221, 183, 255, 0.2), rgba(221, 183, 255, 0.05));\n  --sf-secondary: #d2bbff;\n  --sf-secondary-container: #6001d1;\n  --sf-on-secondary-container: #c9aeff;\n  --sf-secondary-soft: rgba(210, 187, 255, 0.1);\n  --sf-tertiary: #7bd0ff;\n  --sf-tertiary-soft: rgba(123, 208, 255, 0.12);\n  --sf-danger: #ffb4ab;\n  --sf-danger-soft: rgba(255, 180, 171, 0.12);\n  --sf-glow: 0 6px 24px -4px rgba(0, 0, 0, 0.5);\n  --sf-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);\n  --sf-heat-0: #222225; --sf-heat-1: #3b2a5a; --sf-heat-2: #5b2f9a; --sf-heat-3: #8a45e6; --sf-heat-4: #ddb7ff;\n}\n","10-base.css":"/* 10-base.css — корень, типографика, кнопки, чипы, поля ввода, служебные состояния. */\n.sf-root { color: var(--sf-text); background: var(--sf-root-bg, transparent); font-family: var(--sf-font-body); font-size: 14px; line-height: 22px; border-radius: var(--sf-r-xl); padding: var(--sf-gutter) var(--sf-gutter-lg) var(--sf-gutter-lg); max-width: 1600px; margin: 0 auto; box-sizing: border-box; position: relative; overflow-x: clip; }\n.sf-root *, .sf-root *::before, .sf-root *::after { box-sizing: border-box; }\n:where(.sf-root) button { font: inherit; color: inherit; background: none; border: 0; box-shadow: none; cursor: pointer; padding: 0; height: auto; }\n:where(.sf-root) h1, :where(.sf-root) h2, :where(.sf-root) h3, :where(.sf-root) p { margin: 0; }\n.sf-root h1, .sf-root h2, .sf-root h3 { font-family: var(--sf-font-head); color: var(--sf-text); border: 0; }\n.sf-root h1 { font-size: 28px; line-height: 36px; font-weight: 600; letter-spacing: -0.02em; }\n.sf-root a { text-decoration: none; }\n.sf-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; line-height: 0; }\n.sf-flip svg { transform: rotate(180deg); }\n.sf-muted { color: var(--sf-text-3); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }\n.sf-view { display: flex; flex-direction: column; gap: var(--sf-gutter-lg); min-height: 200px; }\n.sf-error { background: var(--sf-danger-soft); color: var(--sf-danger); padding: 1rem; border-radius: var(--sf-r); white-space: pre-wrap; font-family: var(--sf-font-mono); font-size: 12px; }\n\n/* Ширина страницы: frontmatter `cssclasses: sf-page` (до 1600px). Полная ширина — см. 15-fullwidth.css */\n.sf-page .markdown-preview-sizer, .sf-page .markdown-preview-sizer.markdown-preview-section { max-width: 1600px !important; width: 100% !important; }\n.sf-page .cm-contentContainer, .sf-page .cm-sizer { max-width: 1600px !important; }\n\n/* Кнопки */\n.sf-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--sf-r); background: var(--sf-surface-2); color: var(--sf-text); font-family: var(--sf-font-mono); font-weight: 500; font-size: 12px; letter-spacing: 0.02em; transition: background 0.15s, color 0.15s, box-shadow 0.15s; }\n.sf-btn:hover { background: var(--sf-surface-3); }\n.sf-btn--primary { background: var(--sf-accent-grad); color: var(--sf-primary-on); border-radius: var(--sf-r-pill); padding: 0 18px; font-family: var(--sf-font-head); font-size: 14px; box-shadow: var(--sf-glow); }\n.sf-btn--primary:hover { background: var(--sf-accent-grad); filter: brightness(1.08); }\n.sf-btn--ghost { background: transparent; color: var(--sf-text-2); }\n.sf-btn--ghost:hover { background: var(--sf-surface-3); color: var(--sf-text); }\n.sf-btn--danger { color: var(--sf-danger); background: var(--sf-danger-soft); }\n.sf-btn--danger:hover { background: var(--sf-danger-soft); filter: brightness(1.15); }\n.sf-btn--sm { height: 28px; padding: 0 10px; font-size: 11px; }\n.sf-iconbtn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: 32px; height: 32px; border-radius: var(--sf-r); color: var(--sf-text-3); transition: background 0.15s, color 0.15s; }\n.sf-iconbtn:hover { color: var(--sf-text); background: var(--sf-surface-3); }\n.sf-iconbtn.is-active { color: var(--sf-primary); background: var(--sf-primary-soft); }\n.sf-link { color: var(--sf-primary); font-family: var(--sf-font-mono); font-size: 11px; }\n.sf-link:hover { text-decoration: underline; }\n\n/* Чипы */\n.sf-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: var(--sf-r-pill); background: var(--sf-surface-2); color: var(--sf-text-2); font-family: var(--sf-font-mono); font-size: 11px; letter-spacing: 0.04em; white-space: nowrap; transition: all 0.15s; }\n.sf-chip.is-clickable { cursor: pointer; }\n.sf-chip.is-clickable:hover { background: var(--sf-surface-3); color: var(--sf-text); }\n.sf-chip.is-active { background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }\n.sf-chip--not.is-active { background: var(--sf-danger-soft); color: var(--sf-danger); }\n.sf-chip--rule { height: 22px; border-radius: var(--sf-r-sm); background: var(--sf-surface-2); color: var(--sf-secondary); font-size: 12px; letter-spacing: 0; }\n.sf-chip--rule.is-active { background: var(--sf-primary-soft); color: var(--sf-primary); }\n.sf-chip__count { opacity: 0.6; }\n.sf-chip__x { display: inline-flex; cursor: pointer; opacity: 0.7; } .sf-chip__x:hover { opacity: 1; }\n\n.sf-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: var(--sf-r-pill); font-family: var(--sf-font-mono); font-size: 10.5px; letter-spacing: 0.04em; background: var(--sf-surface-3); color: var(--sf-text-2); }\n.sf-badge--source { background: var(--sf-tertiary-soft); color: var(--sf-tertiary); }\n.sf-badge--video, .sf-badge--canvas { background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }\n.sf-badge--audio { background: var(--sf-tertiary-soft); color: var(--sf-tertiary); }\n.sf-count-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); color: var(--sf-primary); font-family: var(--sf-font-mono); font-size: 12px; font-weight: 500; }\n\n/* Поля ввода */\n.sf-field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }\n.sf-field--grow { flex: 1 1 220px; }\n.sf-field > label { font-family: var(--sf-font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); }\n.sf-field__chips { display: flex; flex-wrap: wrap; gap: 6px; }\n.sf-input, .sf-select { height: 34px; padding: 0 10px; border-radius: var(--sf-r); border: 0; background: var(--sf-surface-2); color: var(--sf-text); font: inherit; font-size: 13px; width: 100%; box-shadow: none; }\n.sf-input::placeholder { color: var(--sf-text-3); }\n.sf-input:focus, .sf-select:focus { outline: none; background: var(--sf-surface-3); box-shadow: 0 0 0 1px var(--sf-primary-line); }\n.sf-input--sm { height: 28px; font-family: var(--sf-font-mono); font-size: 12px; width: 150px; }\n.sf-input-wrap { display: flex; align-items: center; gap: 6px; color: var(--sf-text-3); background: var(--sf-surface); border-radius: var(--sf-r); padding-left: 10px; }\n.sf-input-wrap .sf-input { background: transparent; padding-left: 0; box-shadow: none; }\n.sf-input-wrap:focus-within { background: var(--sf-surface-2); }\n.sf-range-wrap { display: flex; align-items: center; gap: 10px; height: 34px; }\n.sf-range { flex: 1; accent-color: var(--sf-primary); }\n.sf-range__val { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-2); min-width: 44px; }\n\n.sf-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 3rem 1rem; color: var(--sf-text-3); text-align: center; }\n.sf-empty__title { font-family: var(--sf-font-head); font-size: 18px; color: var(--sf-text-2); }\n.sf-empty__hint { max-width: 560px; font-family: var(--sf-font-mono); font-size: 12px; }\n.sf-skeleton { display: flex; flex-direction: column; gap: 8px; } .sf-skeleton i { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--sf-surface-2), var(--sf-surface-3), var(--sf-surface-2)); background-size: 200% 100%; animation: sf-shimmer 1.4s infinite; } .sf-skeleton i:nth-child(2) { width: 85%; } .sf-skeleton i:nth-child(3) { width: 60%; }\n@keyframes sf-shimmer { to { background-position: -200% 0; } }\n.sf-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--sf-surface-4); color: var(--sf-text); padding: 8px 16px; border-radius: var(--sf-r); box-shadow: var(--sf-glow); z-index: 100; font-size: 13px; }\n\n/* Кнопка «Наверх»: fixed в <body> (см. ui/common/scroll-top.js), положение задаёт JS по прокручиваемой области */\n.sf-fab { position: fixed; right: 16px; bottom: 20px; z-index: 40; transition: opacity 0.2s, transform 0.2s; }\n.sf-fab.is-hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }\n.sf-fab__btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); cursor: pointer; border: 0; padding: 0; transition: transform 0.15s, filter 0.15s; }\n.sf-fab__btn:hover { filter: brightness(1.08); transform: translateY(-2px); }\n\n/* Защита от горизонтальной прокрутки (планшет): flex/grid-потомки могут сжиматься, длинное содержимое не раздвигает блок */\n.sf-view, .sf-toolbar > *, .sf-toolbar__controls, .sf-panel, .sf-panel__head, .sf-panel__details, .sf-formula, .sf-tagbuilder, .sf-advanced, .sf-quickbar { min-width: 0; max-width: 100%; }\n.sf-root.is-forced-desktop { overflow-x: visible; }\n\n/* Длинные слова и теги не раздвигают блок: чипы сжимаются с многоточием, заголовки переносятся */\n.sf-chip { max-width: 100%; min-width: 0; }\n.sf-chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.sf-chip__count, .sf-chip__x, .sf-chip .sf-icon { flex: none; }\n.sf-card__title, .sf-richlink__title, .sf-preset__titles h3 { overflow-wrap: anywhere; }\n.sf-richlink__title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }\n/* flex-контейнеры с чипами должны уметь сжиматься (иначе длинный тег раздвигает карточку) */\n.sf-card__tags, .sf-card__footer, .sf-tagbuilder__tags, .sf-formula__body, .sf-preset__rules, .sf-msummary, .sf-sumchip { min-width: 0; max-width: 100%; }\n","12-host.css":"/* 12-host.css — размещение в Obsidian: вкладка плагина (ItemView), code-блок ```journal-stream```, окно истории версий. */\n.sf-view-host { padding: 0 !important; }\n.sf-view-host > .sf-root { min-height: 100%; }\n\n.sf-codeblock { margin: 0; }\n.sf-block-warn { margin: 0 0 8px; padding: 6px 10px; border-radius: 10px; font-size: 12px; color: var(--text-error); background: var(--background-secondary); }\n\n.sf-changelog .modal-content { max-height: 70vh; overflow-y: auto; }\n.sf-changelog h3 { margin-top: 1.2em; }\n","15-fullwidth.css":"/* 15-fullwidth.css — режим «на всю ширину».\n   Включается: config.fullWidth = true, параметром code-блока (fullWidth: true), кнопкой ⤢ в навигации\n   или вручную через frontmatter заметки `cssclasses: sf-page-full`.\n   Число колонок карточек задаётся в настройках: columns.min / columns.max / minCardWidth. */\n.sf-root.is-full { max-width: none; width: 100%; border-radius: 0; }\n\n/* Снимаем ограничение ширины строки у самой заметки (reading view и live preview) */\n.sf-page-full { --file-line-width: 100%; }\n.sf-page-full .markdown-preview-sizer,\n.sf-page-full .markdown-preview-sizer.markdown-preview-section { max-width: none !important; width: 100% !important; margin-inline: 0 !important; }\n.sf-page-full .cm-sizer { max-width: none !important; width: 100% !important; }\n.sf-page-full .cm-contentContainer,\n.sf-page-full .cm-content { max-width: none !important; width: 100% !important; margin-inline: 0 !important; }\n.sf-page-full.markdown-preview-view { padding-inline: var(--sf-gutter, 1rem); }\n","20-shell.css":"/* 20-shell.css — верхняя панель (как header в dashboard), шапка экрана, сегменты. */\n\n\n/* Навигация и верхние кнопки: скруглённые «пилюли» в цвет акцента с градиентом.\n   Неактивные — мягкий градиент, активная — полная заливка градиентом. Вкладки растянуты на всю ширину шапки. */\n.sf-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 4px 0 var(--sf-gutter); margin-bottom: var(--sf-gutter); }\n.sf-nav__tabs { display: flex; flex-wrap: wrap; flex: 1 1 380px; min-width: 0; gap: 8px; padding: 2px; }\n.sf-nav__tab { flex: 1 0 auto; min-width: 64px; padding: 9px 18px; border-radius: var(--sf-r-pill); text-align: center; background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 12px; font-weight: 500; white-space: nowrap; transition: box-shadow 0.15s, filter 0.15s, transform 0.15s; }\n.sf-nav__tab:hover { box-shadow: inset 0 0 0 1px var(--sf-primary-line); filter: brightness(1.1); }\n.sf-nav__tab.is-active { background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); font-weight: 700; }\n.sf-nav__tab .sf-nav__short { display: none; }\n.sf-root.is-compact .sf-nav__tab.has-short .sf-nav__full { display: none; }\n.sf-root.is-compact .sf-nav__tab.has-short .sf-nav__short { display: inline; }\n.sf-nav__right { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; margin-left: auto; min-width: 0; }\n.sf-nav__right .sf-iconbtn, .sf-toolbar__controls .sf-iconbtn { width: 34px; height: 34px; border-radius: 50%; background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); }\n.sf-nav__right .sf-iconbtn:hover, .sf-toolbar__controls .sf-iconbtn:hover { box-shadow: inset 0 0 0 1px var(--sf-primary-line); filter: brightness(1.1); }\n.sf-nav__right .sf-iconbtn.is-active { background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); }\n.sf-themebtn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border-radius: 50%; background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); transition: box-shadow 0.15s, filter 0.15s; }\n.sf-themebtn:hover { box-shadow: inset 0 0 0 1px var(--sf-primary-line); filter: brightness(1.1); }\n.sf-toolbar__controls > .sf-dropdown > .sf-btn { border-radius: var(--sf-r-pill); background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); }\n\n.sf-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sf-gutter); flex-wrap: wrap; }\n.sf-toolbar__spacer { flex: 1; }\n.sf-toolbar__title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }\n.sf-toolbar__h1 { display: flex; align-items: center; gap: var(--sf-gutter); }\n.sf-toolbar__controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }\n.sf-crumbs { display: flex; align-items: center; gap: 8px; font-family: var(--sf-font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--sf-primary); }\n.sf-crumbs__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sf-primary); animation: sf-ping 2s infinite; }\n.sf-crumbs__sep { color: var(--sf-text-3); }\n.sf-crumbs__sync { display: inline-flex; align-items: center; gap: 4px; color: var(--sf-text-3); text-transform: none; letter-spacing: 0.02em; }\n@keyframes sf-ping { 50% { opacity: 0.35; } }\n\n.sf-segmented { display: inline-flex; gap: 6px; padding: 0; background: none; }\n.sf-segmented__btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: var(--sf-r-pill); background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 11px; transition: box-shadow 0.15s, filter 0.15s; }\n.sf-segmented__btn:hover { box-shadow: inset 0 0 0 1px var(--sf-primary-line); filter: brightness(1.1); }\n.sf-segmented__btn.is-active { background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); }\n\n/* Бейдж версии (ссылка на «Историю версий» в README) */\n.sf-version { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--sf-r-pill); background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); font-family: var(--sf-font-mono); font-size: 11px; letter-spacing: 0.02em; transition: background 0.15s, color 0.15s; }\n.sf-version:hover { background: var(--sf-surface-3); color: var(--sf-primary); }\n.sf-footer { display: flex; align-items: center; justify-content: center; gap: 6px; padding-top: var(--sf-gutter); font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n\n/* Порядок по времени: «Новые ↓» / «Старые ↑» */\n.sf-sortbtn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--sf-r-pill); background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 12px; transition: box-shadow 0.15s, filter 0.15s; }\n.sf-sortbtn:hover { box-shadow: inset 0 0 0 1px var(--sf-primary-line); filter: brightness(1.1); }\n.sf-sortbtn.is-asc { background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); }\n\n/* ---------- Мобильная шапка ленты/бенто: «Фильтры» + сводка ---------- */\n.sf-mbar { display: flex; flex-direction: column; gap: 10px; }\n.sf-mbar__row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }\n.sf-mfilter { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: var(--sf-r-pill); background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); font-family: var(--sf-font-head); font-size: 15px; font-weight: 600; }\n.sf-mfilter .sf-panel__badge { background: var(--sf-primary-on); color: var(--sf-primary); }\n.sf-msummary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }\n.sf-msummary__none { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-sumchip { max-width: 100%; padding: 3px 10px; border-radius: var(--sf-r-pill); background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.sf-sumchip--more { color: var(--sf-text-2); }\n\n/* Кнопка «Настройки» в шапке на телефоне (вместо ряда переключателей) и строки настроек в окне */\n.sf-nav__gear, .sf-nav__plus { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex: none; border-radius: 50%; background: var(--sf-accent-soft), var(--sf-surface-2); color: var(--sf-primary); box-shadow: inset 0 0 0 1px var(--sf-primary-soft); }\n.sf-setrow { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 0 14px; border-radius: var(--sf-r-lg); background: var(--sf-surface); color: var(--sf-text); text-align: left; font-size: 14px; }\n.sf-setrow .sf-icon { color: var(--sf-primary); }\n.sf-setrow__label { flex: 1; min-width: 0; }\n.sf-setrow__state { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-setrow.is-on .sf-setrow__state { color: var(--sf-primary); font-weight: 700; }\n\n/* ---------- выравнивание по вертикали ----------\n   Поиск с диапазоном дат может занимать две строки — кнопки справа выравниваем по строке поля поиска (сверху), а не по центру блока. */\n.sf-toolbar { align-items: flex-start; }\n.sf-toolbar__controls { align-items: flex-start; flex: 1 1 auto; justify-content: flex-end; }\n.sf-toolbar__controls > :not(.sf-search) { margin-top: 1px; }\n.sf-toolbar__controls > .sf-search { flex: 1 1 360px; max-width: 560px; margin-right: auto; }\n.sf-nav { align-items: flex-start; }\n.sf-nav__right { padding-top: 4px; }\n.sf-root.is-compact .sf-toolbar__controls > :not(.sf-search) { margin-top: 0; }\n.sf-root.is-mobile .sf-toolbar__controls > :not(.sf-search) { margin-top: 0; }\n.sf-root.is-mobile .sf-nav__right { padding-top: 0; }\n\n/* ---------- кнопка «Новая заметка» ---------- */\n.sf-newnote { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--sf-r-pill); background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); font-family: var(--sf-font-mono); font-size: 12px; font-weight: 700; white-space: nowrap; }\n.sf-newnote:hover { filter: brightness(1.08); }\n.sf-nav__plus { background: var(--sf-accent-grad); color: var(--sf-primary-on); box-shadow: var(--sf-glow); }\n\n/* ---------- контраст кнопок с градиентом ----------\n   Текст на заливке всегда берёт --sf-primary-on (тёмный на светлой заливке тёмной темы, белый на насыщенной заливке светлой);\n   правило жёсткое, чтобы стили темы Obsidian для button не делали подпись бледной. */\n.sf-root .sf-newnote, .sf-root .sf-newnote *, .sf-root .sf-nav__tab.is-active, .sf-root .sf-nav__plus, .sf-root .sf-btn--primary,\n.sf-root .sf-segmented__btn.is-active, .sf-root .sf-sortbtn.is-asc, .sf-root .sf-mfilter, .sf-root .sf-tagtab.is-active { color: var(--sf-primary-on) !important; opacity: 1; }\n","30-filters.css":"/* 30-filters.css — быстрые режимы (pills), панель фильтров, формула, теги и автодополнение. */\n.sf-quickbar { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; align-items: center; }\n.sf-quick { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: var(--sf-r-pill); background: var(--sf-surface); color: var(--sf-text-2); font-family: var(--sf-font-mono); font-size: 12px; font-weight: 500; white-space: nowrap; transition: background 0.15s, color 0.15s; }\n.sf-quick:hover { background: var(--sf-surface-2); color: var(--sf-text); }\n.sf-quick.is-active { background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }\n.sf-quick--today .sf-icon { color: var(--sf-tertiary); }\n.sf-quick__count { font-size: 11px; opacity: 0.75; }\n.sf-shuffle { margin-left: 4px; }\n\n.sf-panel { display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); }\n.sf-panel__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }\n.sf-panel__head .sf-formula { flex: 1 1 320px; }\n.sf-panel__actions { display: flex; gap: 6px; }\n.sf-panel__details { display: flex; flex-direction: column; gap: 14px; }\n.sf-panel.is-collapsed .sf-panel__details { display: none; }\n\n.sf-formula { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); min-height: 40px; }\n.sf-formula__body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; }\n.sf-formula__empty { color: var(--sf-text-3); font-size: 12px; font-family: var(--sf-font-mono); }\n.sf-formula__paren { font-family: var(--sf-font-mono); color: var(--sf-text-3); }\n.sf-formula__op { font-family: var(--sf-font-mono); font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--sf-surface-4); }\n.sf-formula__op--or { color: var(--sf-primary); } .sf-formula__op--and { color: var(--sf-tertiary); } .sf-formula__op--not { color: var(--sf-danger); }\n\n.sf-tagbuilder { display: flex; flex-direction: column; gap: 10px; }\n.sf-tagbuilder__head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }\n.sf-tagbuilder__title { font-family: var(--sf-font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); }\n.sf-tagbuilder__modes { display: inline-flex; gap: 2px; padding: 3px; background: var(--sf-surface-2); border-radius: var(--sf-r); }\n.sf-modebtn { padding: 3px 10px; border-radius: var(--sf-r-sm); font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-2); }\n.sf-modebtn.is-active { background: var(--sf-surface-4); color: var(--sf-primary); }\n.sf-modebtn--all.is-active { color: var(--sf-tertiary); } .sf-modebtn--not.is-active { color: var(--sf-danger); }\n.sf-tagbuilder__tags { display: flex; flex-wrap: wrap; gap: 6px; }\n\n/* Ввод тега с автодополнением */\n.sf-tagadd { position: relative; display: inline-flex; align-items: center; gap: 2px; margin: 0; }\n.sf-tagadd__input { width: 190px; font-size: 16px; } /* 16px на мобильных: Safari не увеличивает страницу при фокусе */\n.sf-tagadd__btn { width: 30px; height: 30px; background: var(--sf-surface-2); }\n.sf-suggest { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 240px; max-width: min(340px, 90vw); max-height: 280px; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: var(--sf-surface-3); border-radius: var(--sf-r-lg); box-shadow: var(--sf-glow); }\n.sf-suggest__item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; min-height: 38px; border-radius: var(--sf-r); text-align: left; color: var(--sf-text); font-family: var(--sf-font-mono); font-size: 12px; }\n.sf-suggest__item:hover, .sf-suggest__item.is-active { background: var(--sf-surface-4); }\n.sf-suggest__item.is-used .sf-suggest__tag { color: var(--sf-primary); }\n.sf-suggest__count { color: var(--sf-text-3); }\n.sf-suggest__new { color: var(--sf-primary); justify-content: flex-start; }\n\n.sf-attrs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }\n.sf-attrs__label { font-family: var(--sf-font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); margin-right: 2px; }\n.sf-attrs__sep { width: 1px; height: 18px; background: var(--sf-line); margin: 0 6px; }\n.sf-advanced { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; padding-top: 12px; border-top: 1px solid var(--sf-line); }\n\n/* Наборы тегов: Топ · Случайные · За год · Этот день */\n.sf-tagtabs { display: flex; flex-wrap: wrap; gap: 6px; }\n.sf-tagtab { display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px; border-radius: var(--sf-r-pill); background: var(--sf-surface-2); color: var(--sf-text-2); font-family: var(--sf-font-mono); font-size: 11px; transition: background 0.15s, color 0.15s; }\n.sf-tagtab:hover { color: var(--sf-text); background: var(--sf-surface-3); }\n.sf-tagtab.is-active { background: var(--sf-accent-grad); color: var(--sf-primary-on); }\n","35-menu.css":"/* 35-menu.css — поиск, выпадающее меню «Подборки», кнопка с подтверждением. */\n.sf-search { display: flex; align-items: center; gap: 8px; min-width: 220px; flex: 0 1 300px; }\n.sf-search .sf-input-wrap { flex: 1; }\n.sf-search__status { font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); white-space: nowrap; }\n.sf-search__clear { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-right: 4px; border-radius: var(--sf-r-sm); color: var(--sf-text-3); }\n.sf-search__clear:hover { color: var(--sf-text); background: var(--sf-surface-3); }\n.sf-search input[type=\"search\"]::-webkit-search-cancel-button { display: none; }\n\n.sf-dropdown { position: relative; display: inline-flex; }\n.sf-menu { position: absolute; top: calc(100% + 6px); z-index: 50; width: 320px; max-width: calc(100vw - 32px); padding: 8px; background: var(--sf-surface-3); border-radius: var(--sf-r-lg); box-shadow: var(--sf-glow); display: flex; flex-direction: column; gap: 6px; }\n.sf-menu--right { right: 0; } .sf-menu--left { left: 0; }\n.sf-menu__title { font-family: var(--sf-font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); padding: 4px 8px; }\n.sf-menu__list { display: flex; flex-direction: column; gap: 2px; max-height: 280px; overflow-y: auto; }\n.sf-menu__row { display: flex; align-items: center; gap: 2px; border-radius: var(--sf-r); }\n.sf-menu__row.is-active { background: var(--sf-primary-soft); }\n.sf-menu__item { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 8px; border-radius: var(--sf-r); text-align: left; color: var(--sf-text); }\n.sf-menu__item:hover, .sf-menu__row:hover { background: var(--sf-surface-4); }\n.sf-menu__item .sf-icon { color: var(--sf-primary); }\n.sf-menu__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.sf-menu__count { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-menu__empty { padding: 10px 8px; color: var(--sf-text-3); font-size: 12px; }\n.sf-menu__save { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-top: 1px solid var(--sf-line); }\n.sf-menu__hint { font-size: 12px; color: var(--sf-text-2); }\n.sf-menu__saverow { display: flex; gap: 6px; }\n.sf-menu__link { align-self: flex-start; padding: 4px 8px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-primary); }\n.sf-menu__link:hover { text-decoration: underline; }\n\n.sf-iconbtn.is-armed, .sf-btn.is-armed { width: auto; padding: 0 10px; background: var(--sf-danger-soft); color: var(--sf-danger); }\n.sf-confirm__text { font-family: var(--sf-font-mono); font-size: 11px; white-space: nowrap; }\n.sf-iconbtn.is-disabled, .sf-btn.is-disabled, .sf-btn:disabled { opacity: 0.45; cursor: not-allowed; }\n\n/* Диапазон дат рядом с поиском: три независимых параметра (текст · от · до) */\n.sf-search { flex-wrap: wrap; flex: 0 1 auto; }\n.sf-search .sf-input-wrap { flex: 1 1 240px; min-width: 200px; }\n.sf-daterange { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }\n.sf-date { display: inline-flex; align-items: center; gap: 6px; padding-left: 10px; border-radius: var(--sf-r); background: var(--sf-surface); color: var(--sf-text-3); font-family: var(--sf-font-mono); font-size: 11px; }\n.sf-date:focus-within { background: var(--sf-surface-2); }\n.sf-date .sf-date__input { width: 132px; max-width: 100%; padding-left: 0; background: transparent; color: var(--sf-text); font-family: var(--sf-font-mono); font-size: 12px; }\n.sf-root[data-sf-theme=\"dark\"] .sf-date__input, body.theme-dark .sf-root[data-sf-theme=\"auto\"] .sf-date__input { color-scheme: dark; }\n.sf-search--panel { width: 100%; }\n","36-modal.css":"/* 36-modal.css — модальное окно «Фильтры» (мобильная версия). Живёт в <body>: position: fixed, токены из data-sf-theme. */\n.sf-modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; background: rgba(0, 0, 0, 0.55); }\n.sf-modal__sheet { display: flex; flex-direction: column; width: 100%; max-width: 620px; max-height: 94vh; max-height: 94dvh; background: var(--sf-canvas); color: var(--sf-text); border-radius: var(--sf-r-xl) var(--sf-r-xl) 0 0; box-shadow: var(--sf-glow); overflow: hidden; font-family: var(--sf-font-body); }\n.sf-modal__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 10px; border-bottom: 1px solid var(--sf-line); }\n.sf-modal__title { margin: 0; font-family: var(--sf-font-head); font-size: 18px; font-weight: 600; color: var(--sf-text); }\n.sf-modal__close { width: 38px; height: 38px; }\n.sf-modal__root.sf-root { max-width: none; margin: 0; padding: 0; border-radius: 0; background: none; overflow-y: auto; overflow-x: clip; flex: 1; min-height: 0; overscroll-behavior: contain; }\n.sf-modal__body { display: flex; flex-direction: column; gap: 18px; padding: 14px 16px 20px; min-width: 0; }\n.sf-modal__footer { display: flex; align-items: center; gap: 8px; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--sf-line); background: var(--sf-canvas); }\n.sf-modal__show { flex: 1; justify-content: center; }\n.sf-modal__refresh { flex: none; background: var(--sf-surface-2); }\n.sf-msec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }\n.sf-msec__title { margin: 0; font-family: var(--sf-font-mono); font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); }\n.sf-msec__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }\n/* внутри окна ничего не прокручивается вбок: режимы и теги переносятся */\n.sf-modal .sf-quickbar { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }\n.sf-modal .sf-dropdown { position: relative; }\n.sf-modal .sf-dropdown > .sf-btn { width: auto; }\n.sf-modal .sf-menu { left: 0; right: 0; width: auto; max-width: none; }\n.sf-modal .sf-search { width: 100%; }\n.sf-modal .sf-formula { flex-wrap: wrap; }\n@media (min-width: 640px) { .sf-modal { align-items: center; } .sf-modal__sheet { border-radius: var(--sf-r-xl); max-height: 88vh; } }\n","37-popup.css":"/* 37-popup.css — плавающее окно просмотра заметки (режим «Открывать заметки в плавающем окне»).\n   Затемнение (overlay) на весь экран в <body>, окно по центру; перетаскивается за заголовок, размер меняется за правый нижний угол. */\n.sf-npop-overlay { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8, 6, 14, 0.62); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); animation: sfNpopFade 0.14s ease-out; }\n@keyframes sfNpopFade { from { opacity: 0; } to { opacity: 1; } }\n.sf-npop.sf-root { position: relative; flex: none; width: min(720px, calc(100vw - 48px)); height: min(78vh, 800px); min-width: 300px; min-height: 220px; max-width: 94vw; max-height: 92vh;\n  display: flex; flex-direction: column; padding: 0; margin: 0; overflow: hidden; resize: both; border-radius: var(--sf-r-lg, 16px);\n  background: var(--sf-canvas); color: var(--sf-text); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px var(--sf-line); }\n.sf-npop__head { display: flex; align-items: center; gap: 6px; padding: 10px 12px; cursor: move; border-bottom: 1px solid var(--sf-line); background: var(--sf-surface); user-select: none; touch-action: none; }\n.sf-npop__title { flex: 1; min-width: 0; margin: 0; font-family: var(--sf-font-head); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.sf-npop__head .sf-iconbtn { flex: none; width: 32px; height: 32px; }\n.sf-npop__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 0; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-npop__meta:empty { display: none; }\n.sf-npop__meta .sf-chip { max-width: 100%; }\n.sf-npop__body { flex: 1; min-height: 0; overflow: auto; padding: 8px 18px 24px; user-select: text; overflow-wrap: anywhere; }\n.sf-npop__body img, .sf-npop__body video { max-width: 100%; height: auto; border-radius: 10px; }\n.sf-npop__body .frontmatter, .sf-npop__body .metadata-container { display: none; }\n@media (max-width: 700px) {\n  .sf-npop-overlay { padding: 0; align-items: flex-end; }\n  .sf-npop.sf-root { width: 100vw; height: 88vh; max-width: none; max-height: none; border-radius: 16px 16px 0 0; resize: none; }\n  .sf-npop__head { cursor: default; }\n}\n","40-card.css":"/* 40-card.css — карточка поста (как карточки dashboard): surface-container-low, радиус 1rem, без рамки;\n   при наведении фон на ступень светлее; клик по карточке открывает заметку. */\n.sf-card { display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); transition: background 0.18s, box-shadow 0.18s; min-width: 0; }\n.sf-card.is-clickable { cursor: pointer; }\n.sf-card:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); box-shadow: var(--sf-glow); }\n.sf-card--audio { --sf-tint: var(--sf-tertiary-soft); }\n.sf-card--video, .sf-card--canvas { --sf-tint: var(--sf-secondary-soft); }\n.sf-card--quote { --sf-tint: var(--sf-primary-soft); }\n.sf-card:hover .sf-chip:not(.is-active) { background: var(--sf-surface-3); }\n.sf-card.is-pinned { box-shadow: inset 0 0 0 1px var(--sf-primary-line); }\n.sf-card__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.sf-card__date { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); letter-spacing: 0.04em; }\n.sf-card__meta { display: flex; align-items: center; gap: 4px; }\n.sf-card__meta .sf-iconbtn { width: 26px; height: 26px; }\n.sf-card__title { font-family: var(--sf-font-head); font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.015em; color: var(--sf-text); }\n.sf-card__title:hover { color: var(--sf-primary); }\n.sf-card__body { display: flex; flex-direction: column; gap: 10px; min-width: 0; }\n.sf-card__text { font-size: 14px; line-height: 22px; color: var(--sf-text); overflow-wrap: anywhere; }\n.sf-card__text > :first-child { margin-top: 0; } .sf-card__text > :last-child { margin-bottom: 0; }\n.sf-card__text img { max-width: 100%; border-radius: var(--sf-r-sm); }\n.sf-card__text a.internal-link, .sf-richlink a.internal-link { color: var(--sf-primary); background: var(--sf-primary-soft); font-family: var(--sf-font-mono); font-size: 0.92em; border-radius: 4px; padding: 1px 5px; text-decoration: none; transition: filter 0.15s; }\n.sf-card__text a.internal-link:hover { filter: brightness(1.2); }\n.sf-card__text a.tag { color: var(--sf-secondary); background: var(--sf-surface-2); font-family: var(--sf-font-mono); font-size: 0.9em; border-radius: var(--sf-r-pill); padding: 1px 8px; cursor: pointer; }\n.sf-card__text a.external-link { color: var(--sf-tertiary); }\n.sf-card__text pre { background: var(--sf-surface-2); border-radius: var(--sf-r); font-size: 12.5px; }\n.sf-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }\n.sf-card__tags { display: flex; flex-wrap: wrap; gap: 5px; }\n.sf-card__tagmore { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); align-self: center; }\n.sf-card__stats { display: flex; align-items: center; gap: 10px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-card__backlinks { display: inline-flex; align-items: center; gap: 4px; color: var(--sf-tertiary); }\n.sf-card__stats .sf-iconbtn { width: 26px; height: 26px; }\n.sf-media-missing { padding: 10px 12px; border-radius: var(--sf-r); background: var(--sf-danger-soft); color: var(--sf-danger); font-size: 12px; font-family: var(--sf-font-mono); }\n","41-card-types.css":"/* 41-card-types.css — тела карточек по типам: цитата, аудио, видео, фото, canvas, задачи, ссылка, rich-link. */\n.sf-quote { position: relative; margin: 0; padding: 12px 14px 12px 16px; border-left: 2px solid var(--sf-primary-line); background: var(--sf-surface-2); border-radius: 0 var(--sf-r-lg) var(--sf-r-lg) 0; }\n.sf-quote__mark { position: absolute; top: 10px; right: 12px; color: var(--sf-primary); opacity: 0.3; }\n.sf-quote__text { font-family: var(--sf-font-body); font-size: var(--sf-quote-size); line-height: 1.5; font-weight: 400; font-style: italic; color: var(--sf-text-2); }\n.sf-quote__text > :first-child { margin-top: 0; } .sf-quote__text > :last-child { margin-bottom: 0; }\n.sf-quote__cite { display: block; margin-top: 8px; font-style: normal; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n\n.sf-audio { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); }\n.sf-audio__btn { width: 36px; height: 36px; border-radius: 50%; background: var(--sf-primary-fill); color: var(--sf-primary-on); display: inline-flex; align-items: center; justify-content: center; flex: none; transition: background 0.15s; }\n.sf-audio__btn:hover, .sf-audio__btn.is-playing { background: var(--sf-primary-hover); }\n.sf-audio__wave { display: flex; align-items: center; gap: 2px; height: 34px; flex: 1; cursor: pointer; min-width: 0; }\n.sf-audio__bar { flex: 1; min-width: 2px; border-radius: 2px; background: var(--sf-surface-4); transition: background 0.1s; }\n.sf-audio__bar.is-played { background: var(--sf-tertiary); }\n.sf-audio__time { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-tertiary); white-space: nowrap; }\n.sf-audio audio { display: none; }\n\n.sf-video { position: relative; border-radius: var(--sf-r-lg); overflow: hidden; background: #000; }\n.sf-video video { display: block; width: 100%; max-height: 340px; }\n.sf-video__badge { position: absolute; top: 8px; left: 8px; padding: 2px 8px; border-radius: var(--sf-r-pill); background: rgba(0, 0, 0, 0.6); color: #fff; font-family: var(--sf-font-mono); font-size: 10.5px; pointer-events: none; }\n\n/* Картинки: centerCrop. Рамка имеет фиксированные пропорции, картинка заполняет её (object-fit: cover по центру) и\n   НЕ реагирует на наведение — ни масштаба, ни сдвига, ни фильтров (раньше hover-эффект «двигал» картинку). */\n.sf-images { display: grid; gap: 4px; border-radius: var(--sf-r-lg); overflow: hidden; aspect-ratio: 16 / 10; background: var(--sf-surface-2); }\n.sf-images--1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }\n.sf-images--2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }\n.sf-images--3 { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; } .sf-images--3 .sf-images__cell:first-child { grid-row: span 2; }\n.sf-images--4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }\n.sf-images__cell { position: relative; display: block; min-width: 0; min-height: 0; overflow: hidden; background: var(--sf-surface-2); }\n.sf-images__cell img, .sf-card img { transform: none !important; transition: none !important; filter: none !important; }\n.sf-images__cell img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; object-fit: cover; object-position: 50% 50%; display: block; }\n.sf-images__more { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); color: #fff; font-family: var(--sf-font-head); font-size: 22px; font-weight: 600; }\n\n.sf-canvas { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text); transition: background 0.15s; }\n.sf-canvas:hover { background: var(--sf-surface-3); }\n.sf-canvas .sf-icon { color: var(--sf-primary); }\n.sf-canvas__name { font-family: var(--sf-font-mono); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; }\n.sf-canvas__open { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-primary); }\n\n.sf-progress { height: 4px; border-radius: 2px; background: var(--sf-surface-4); overflow: hidden; }\n.sf-progress__bar { height: 100%; background: var(--sf-primary); transition: width 0.3s; }\n.sf-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }\n.sf-tasks__item { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; }\n.sf-tasks__box { width: 16px; height: 16px; flex: none; margin-top: 3px; border: 1px solid var(--sf-text-3); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: var(--sf-primary-on); }\n.sf-tasks__item.is-done .sf-tasks__box { background: var(--sf-primary-fill); border-color: var(--sf-primary-fill); }\n.sf-tasks__item.is-done > span:last-child { color: var(--sf-text-3); text-decoration: line-through; }\n.sf-tasks__more { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n\n.sf-extlink { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text-2); transition: background 0.15s; }\n.sf-extlink:hover { background: var(--sf-surface-3); }\n.sf-extlink__main { display: flex; flex-direction: column; flex: 1; min-width: 0; }\n.sf-extlink__host { font-family: var(--sf-font-head); font-weight: 500; color: var(--sf-text); }\n.sf-extlink__url { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n\n/* Rich-link: строка «заметка» как во вложенных блоках dashboard (surface-container, hover — container-high) */\n.sf-richlink { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); color: var(--sf-text); transition: background 0.15s; }\n.sf-richlink:hover { background: var(--sf-surface-3); }\n.sf-richlink__icon { display: inline-flex; width: 28px; height: 28px; border-radius: var(--sf-r); background: var(--sf-primary-soft); color: var(--sf-primary); align-items: center; justify-content: center; flex: none; }\n.sf-richlink--audio .sf-richlink__icon, .sf-richlink--video .sf-richlink__icon { background: var(--sf-tertiary-soft); color: var(--sf-tertiary); }\n.sf-richlink__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }\n.sf-richlink__title { font-family: var(--sf-font-head); font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.sf-richlink:hover .sf-richlink__title { color: var(--sf-primary); }\n.sf-richlink__excerpt { font-size: 12px; line-height: 18px; color: var(--sf-text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }\n.sf-richlink__excerpt:empty { display: none; }\n.sf-richlink__meta { font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); }\n.sf-richlink__out { color: var(--sf-text-3); flex: none; }\n","45-skeleton.css":"/* 45-skeleton.css — шиммеры загрузки карточек (вместо пустого места, пока строится лента). */\n.sf-shim { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--sf-surface-2), var(--sf-surface-4), var(--sf-surface-2)); background-size: 200% 100%; animation: sf-shimmer 1.4s infinite linear; }\n.sf-shim--pill { width: 56px; height: 20px; border-radius: var(--sf-r-pill); }\n.sf-shim--media { width: 100%; height: 120px; border-radius: var(--sf-r-lg); }\n.sf-skelgrid { display: grid; gap: var(--sf-gutter-lg); align-items: start; }\n.sf-root.is-mobile .sf-skelgrid { gap: 14px; }\n.sf-skelcard { display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); border-radius: var(--sf-r-xl); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); box-shadow: var(--sf-shadow); }\n.sf-root.is-mobile .sf-skelcard { padding: 14px; border-radius: var(--sf-r-lg); }\n.sf-skelcard__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.sf-tilegrid .sf-skelgrid { position: relative; }\n@media (prefers-reduced-motion: reduce) { .sf-shim, .sf-skeleton i { animation: none; } }\n","50-feed.css":"/* 50-feed.css — раскладки ленты. Число колонок и позиции плиток считает JS (config.columns, minCardWidth). */\n.sf-feed-region { min-width: 0; }\n.sf-feed { display: flex; flex-direction: column; gap: var(--sf-gutter-lg); align-items: stretch; }\n.sf-loadmore { align-self: center; }\n\n/* Плитки (Masonry, Bento, Подборки): абсолютное позиционирование, порядок — слева направо, затем сверху вниз */\n.sf-tilegrid { position: relative; min-width: 0; width: 100%; }\n.sf-tilegrid__item { position: absolute; top: 0; left: 0; min-width: 0; width: 100%; }\n.sf-tilegrid.is-pending .sf-tilegrid__item { visibility: hidden; }\n.sf-tilegrid__item > .sf-card, .sf-tilegrid__item > .sf-preset { width: 100%; }\n.sf-tilegrid--bento .sf-card { padding: var(--sf-pad); }\n.sf-tilegrid--bento .sf-video video { max-height: 360px; }\n\n/* Timeline: вертикальная лента по дням; внутри дня по две карточки в ряд одинаковой высоты, не помещаются — по одной */\n.sf-feed--timeline { align-items: center; }\n.sf-timeline__group { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--sf-gutter); width: 100%; max-width: 1060px; }\n.sf-timeline__label { position: sticky; top: 8px; align-self: start; display: flex; flex-direction: column; gap: 2px; padding-left: 18px; font-family: var(--sf-font-head); font-weight: 500; color: var(--sf-text); }\n.sf-timeline__dot { position: absolute; left: 0; top: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--sf-primary); box-shadow: 0 0 0 4px var(--sf-primary-soft); }\n.sf-timeline__key { font-family: var(--sf-font-mono); font-size: 10.5px; font-weight: 400; color: var(--sf-text-3); }\n.sf-timeline__items { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: var(--sf-gutter); align-items: stretch; border-left: 1px solid var(--sf-line); padding-left: var(--sf-gutter); margin-left: -4px; min-width: 0; }\n.sf-timeline__items > .sf-card { height: 100%; }\n","60-overview.css":"/* 60-overview.css — «Обзор» по макету: пульс месяца (график, стрик, связи, медиа), озарения, годовой срез. */\n.sf-hero { display: flex; flex-direction: column; gap: 6px; }\n.sf-hero p { color: var(--sf-text-2); }\n.sf-hero--row { flex-direction: row; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; }\n.sf-section { display: flex; flex-direction: column; gap: 16px; }\n.sf-section__title { font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.015em; }\n.sf-section__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }\n.sf-section__lead { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }\n.sf-section__dot { width: 12px; height: 12px; border-radius: 50%; background: var(--sf-primary); flex: none; }\n.sf-section__dot.is-secondary { background: var(--sf-secondary); } .sf-section__dot.is-tertiary { background: var(--sf-tertiary); }\n.sf-section__aside { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-section__aside .sf-icon { color: var(--sf-tertiary); }\n.sf-pill { padding: 2px 10px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); color: var(--sf-secondary); font-family: var(--sf-font-mono); font-size: 11px; }\n\n/* --- Пульс месяца: 4 карточки --- */\n.sf-pulse__grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sf-gutter); }\n.sf-pcard, .sf-card-block { background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); transition: background 0.18s, box-shadow 0.18s; }\n.sf-pcard:hover, .sf-card-block:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); }\n.sf-pcard { display: flex; flex-direction: column; gap: 6px; padding: var(--sf-pad); min-width: 0; }\n.sf-pcard__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }\n.sf-pcard__label { margin: 0; font-family: var(--sf-font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--sf-text-3); }\n.sf-pcard__value { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-family: var(--sf-font-head); font-size: 34px; line-height: 40px; font-weight: 600; letter-spacing: -0.03em; }\n.sf-pcard__unit { font-family: var(--sf-font-body); font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--sf-text-2); }\n.sf-pcard__unit.is-tertiary, .is-tertiary { color: var(--sf-tertiary); } .sf-pcard__unit.is-primary, .is-primary { color: var(--sf-primary); } .is-secondary { color: var(--sf-secondary); }\n.sf-pcard__trend { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--sf-r-pill); background: var(--sf-surface-2); color: var(--sf-tertiary); font-family: var(--sf-font-mono); font-size: 11px; }\n.sf-pcard__trend.is-down { color: var(--sf-danger); }\n.sf-pcard__badge { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--sf-r-lg); background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }\n.sf-pcard__badge.is-plain { background: var(--sf-surface-2); color: var(--sf-tertiary); }\n.sf-pcard__body { display: flex; flex-direction: column; gap: 8px; margin-top: auto; padding-top: 10px; }\n.sf-pcard__axis { display: flex; justify-content: space-between; gap: 8px; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); }\n.sf-pcard__axis span:nth-child(2):not(:last-child) { text-align: center; flex: 1; }\n.sf-pcard__note { margin: 0; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); }\n\n.sf-spark { position: relative; height: 56px; color: var(--sf-primary); }\n.sf-spark svg { width: 100%; height: 100%; overflow: visible; display: block; }\n.sf-spark__dot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: var(--sf-primary); box-shadow: 0 0 0 4px var(--sf-primary-soft); animation: sf-ping 2s infinite; }\n\n.sf-streak { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }\n.sf-streak__day { display: flex; align-items: center; justify-content: center; aspect-ratio: 1; border-radius: 50%; background: var(--sf-surface-3); color: var(--sf-text-3); font-family: var(--sf-font-mono); font-size: 10px; font-weight: 600; }\n.sf-streak__day.is-on { background: var(--sf-primary-fill); color: var(--sf-primary-on); }\n.sf-streak__day.is-today { box-shadow: 0 0 0 3px var(--sf-primary-soft); }\n.sf-streak__day.is-today.is-on { background: var(--sf-primary-hover); animation: sf-ping 2s infinite; }\n\n.sf-bar { height: 8px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); overflow: hidden; }\n.sf-bar__fill { height: 100%; border-radius: var(--sf-r-pill); background: var(--sf-tertiary); }\n.sf-segbar { display: flex; gap: 2px; height: 10px; padding: 2px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); overflow: hidden; }\n.sf-seg { height: 100%; border-radius: var(--sf-r-pill); min-width: 0; }\n.sf-seg.is-photo, .sf-legend__dot.is-photo { background: var(--sf-primary); }\n.sf-seg.is-video, .sf-legend__dot.is-video { background: var(--sf-tertiary); }\n.sf-seg.is-audio, .sf-legend__dot.is-audio { background: var(--sf-secondary-container); }\n.sf-seg.is-empty { background: transparent; }\n.sf-legend { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text); }\n.sf-legend__item { display: inline-flex; align-items: center; gap: 6px; }\n.sf-legend__dot { width: 8px; height: 8px; border-radius: 50%; }\n\n.sf-tagstrip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 14px var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); }\n.sf-tagstrip__label { display: inline-flex; align-items: center; gap: 8px; font-family: var(--sf-font-mono); font-size: 12px; color: var(--sf-text-3); }\n.sf-tagstrip__tags { display: flex; flex-wrap: wrap; gap: 8px; }\n\n/* --- Случайные озарения --- */\n.sf-insights { min-width: 0; }\n.sf-insights__tools { display: flex; align-items: center; gap: 8px; }\n.sf-insights__count .sf-segmented__btn { padding: 3px 11px; }\n\n/* --- Годовой срез: карта активности + типы --- */\n.sf-yearly { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--sf-gutter-lg); align-items: stretch; }\n.sf-card-block { display: flex; flex-direction: column; gap: 14px; padding: var(--sf-pad); min-width: 0; }\n.sf-block__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }\n.sf-block__title { font-size: 18px; line-height: 26px; font-weight: 500; letter-spacing: -0.01em; }\n.sf-block__sub { margin: 2px 0 0; max-width: 560px; font-size: 12px; line-height: 18px; color: var(--sf-text-3); }\n.sf-block__stat { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-2); text-align: right; }\n.sf-block__stat strong { font-size: 18px; color: var(--sf-primary); }\n.sf-block__stat span { color: var(--sf-text-3); }\n\n/* Карта активности: одна сетка (подписи дней · недели), квадратные ячейки тянутся по ширине — прокрутка не нужна на любом экране */\n.sf-heat__wrap { max-width: calc(26px + var(--cols, 53) * 22px); }\n.sf-heat { --gap: 3px; display: grid; grid-template-columns: 22px repeat(var(--cols), minmax(0, 1fr)); grid-template-rows: 14px repeat(7, auto); gap: var(--gap); width: 100%; font-family: var(--sf-font-mono); font-size: 9.5px; color: var(--sf-text-3); }\n.sf-heat__daylabel { align-self: center; line-height: 1; }\n.sf-heat__month { white-space: nowrap; line-height: 14px; overflow: visible; }\n.sf-heat__cell { width: 100%; aspect-ratio: 1; min-width: 0; border-radius: 3px; background: var(--sf-heat-0); display: block; }\n.sf-heat__legend .sf-heat__cell { width: 12px; flex: none; }\n.sf-heat__cell.lv--1 { background: transparent; }\n.sf-heat__cell.lv-1 { background: var(--sf-heat-1); } .sf-heat__cell.lv-2 { background: var(--sf-heat-2); } .sf-heat__cell.lv-3 { background: var(--sf-heat-3); } .sf-heat__cell.lv-4 { background: var(--sf-heat-4); }\n.sf-heat__cell.is-click { cursor: pointer; } .sf-heat__cell.is-click:hover { outline: 2px solid var(--sf-primary-line); outline-offset: 1px; }\n.sf-heat__legend { display: flex; align-items: center; gap: 4px; margin-top: auto; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); justify-content: flex-end; }\n.sf-heat__legend span:first-child { margin-right: 4px; } .sf-heat__legend span:last-child { margin-left: 4px; }\n\n.sf-dist { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }\n.sf-donut { position: relative; flex: none; }\n.sf-donut svg { display: block; }\n.sf-donut__track { stroke: var(--sf-surface-3); }\n.sf-donut__center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; font-family: var(--sf-font-mono); font-size: 10.5px; color: var(--sf-text-3); }\n.sf-donut__center span { display: flex; flex-direction: column; line-height: 1.2; } .sf-donut__center strong { font-family: var(--sf-font-head); font-size: 22px; color: var(--sf-text); }\n.sf-donut__seg--text, .sf-dist__dot.is-text { stroke: var(--sf-primary); background: var(--sf-primary); }\n.sf-donut__seg--image, .sf-dist__dot.is-image { stroke: var(--sf-secondary); background: var(--sf-secondary); }\n.sf-donut__seg--video, .sf-dist__dot.is-video { stroke: var(--sf-tertiary); background: var(--sf-tertiary); }\n.sf-donut__seg--audio, .sf-dist__dot.is-audio { stroke: var(--sf-on-secondary-container); background: var(--sf-on-secondary-container); }\n.sf-donut__seg--quote, .sf-dist__dot.is-quote { stroke: #f59e0b; background: #f59e0b; }\n.sf-donut__seg--tasks, .sf-dist__dot.is-tasks { stroke: #4ade80; background: #4ade80; }\n.sf-donut__seg--link, .sf-dist__dot.is-link { stroke: var(--sf-danger); background: var(--sf-danger); }\n.sf-donut__seg--canvas, .sf-dist__dot.is-canvas { stroke: var(--sf-text-3); background: var(--sf-text-3); }\n.sf-dist__list { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 140px; }\n.sf-dist__row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--sf-r); text-align: left; font-size: 13px; transition: background 0.15s; }\n.sf-dist__row:hover { background: var(--sf-surface-2); }\n.sf-dist__dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }\n.sf-dist__name { flex: 1; } .sf-dist__count { font-family: var(--sf-font-mono); font-size: 12px; } .sf-dist__pct { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); min-width: 34px; text-align: right; }\n","70-collections.css":"/* 70-collections.css — карточки смарт-подборок (как блоки в dashboard). Раскладка — общий движок плиток (см. 50-feed.css). */\n.sf-preset { position: relative; display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); overflow: hidden; transition: background 0.18s, box-shadow 0.18s; }\n.sf-preset.is-clickable { cursor: pointer; }\n.sf-preset:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); box-shadow: var(--sf-glow); }\n.sf-preset__glow { position: absolute; top: -64px; right: -64px; width: 224px; height: 224px; border-radius: 50%; background: var(--sf-primary); opacity: 0.1; filter: blur(48px); pointer-events: none; }\n.sf-preset > * { position: relative; }\n.sf-preset > .sf-preset__glow { position: absolute; }\n.sf-preset__head { display: flex; align-items: flex-start; gap: 12px; }\n.sf-preset__icon { color: var(--sf-primary); display: inline-flex; padding-top: 3px; flex: none; }\n.sf-preset__titles { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }\n.sf-preset__titles h3 { font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.015em; }\n.sf-preset__count { align-self: flex-start; padding: 1px 8px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); color: var(--sf-primary); font-family: var(--sf-font-mono); font-size: 11px; }\n.sf-preset--hero .sf-preset__count { background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }\n.sf-preset__tools { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--sf-r); background: var(--sf-surface-2); }\n.sf-preset__tools .sf-iconbtn { width: 26px; height: 26px; }\n.sf-preset__desc { font-size: 12px; line-height: 18px; color: var(--sf-text-2); }\n.sf-preset__rules { display: flex; flex-wrap: wrap; gap: 6px; }\n.sf-preset__preview { display: flex; flex-direction: column; gap: 8px; }\n.sf-preset__foot { display: flex; align-items: center; gap: 8px; padding-top: 2px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }\n.sf-preset__open { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-primary); }\n.sf-preset:hover .sf-richlink { background: var(--sf-surface-2); }\n.sf-preset:hover .sf-richlink:hover { background: var(--sf-surface-3); }\n","80-studio.css":"/* 80-studio.css — конструктор фильтров и генератор DQL. */\n.sf-studio { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: var(--sf-gutter-lg); align-items: start; }\n.sf-studio__main, .sf-studio__side { display: flex; flex-direction: column; gap: var(--sf-gutter); min-width: 0; }\n.sf-studio__side { position: sticky; top: 8px; }\n.sf-meta { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; padding: var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); }\n.sf-iconpick { display: flex; flex-wrap: wrap; gap: 2px; }\n.sf-livepreview, .sf-dqlpanel { display: flex; flex-direction: column; gap: 10px; padding: var(--sf-pad); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); }\n.sf-livepreview__head, .sf-dqlpanel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-2); }\n.sf-livepreview__list { display: flex; flex-direction: column; gap: 8px; }\n.sf-dql { margin: 0; padding: 12px; border-radius: var(--sf-r-lg); background: var(--sf-surface-2); font-family: var(--sf-font-mono); font-size: 12.5px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }\n.sf-dql code { font-family: inherit; background: none; padding: 0; color: var(--sf-text); }\n.sf-dql__kw { color: var(--sf-primary); font-weight: 600; } .sf-dql__str { color: #4ade80; } .sf-dql__fn { color: var(--sf-tertiary); } .sf-dql__num { color: #fbbf24; }\n.sf-root:not([data-sf-theme=\"dark\"]) .sf-dql__str { color: #16803c; }\n.sf-dqlpanel__notes { margin: 0; padding-left: 18px; font-size: 12px; color: var(--sf-text-3); }\n.sf-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px var(--sf-gutter); background: var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); position: sticky; top: 8px; z-index: 5; }\n.sf-panel__search { display: flex; }\n.sf-panel__search .sf-search { flex: 1; max-width: none; }\n.sf-search--panel .sf-input-wrap { background: var(--sf-surface-2); }\n","85-responsive.css":"/* 85-responsive.css — адаптивность по ширине САМОГО блока (классы ставит app/shell.js, а не media-запросы окна):\n   .is-compact — < 900px (планшет / узкая панель);  .is-mobile — < config.singleColumnBelow (560px): один столбец, мобильный интерфейс.\n   Число колонок карточек считает JS (config.columns), на телефоне — всегда 1. */\n\n/* ---------- compact: < 900px ---------- */\n.sf-root.is-compact .sf-studio { grid-template-columns: 1fr; }\n.sf-root.is-compact .sf-studio__side { position: static; }\n.sf-root.is-compact .sf-pulse__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n.sf-root.is-compact .sf-yearly { grid-template-columns: 1fr; }\n.sf-root.is-compact .sf-toolbar__controls { width: 100%; }\n.sf-root.is-compact .sf-search { flex: 1 1 240px; }\n.sf-root.is-compact .sf-date .sf-date__input { width: 118px; }\n.sf-root.is-compact .sf-daterange { flex-wrap: wrap; }\n\n/* ---------- mobile: один столбец ---------- */\n.sf-root.is-mobile { padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); border-radius: var(--sf-r-lg); font-size: 15px; -webkit-tap-highlight-color: transparent; }\n.sf-root.is-mobile button, .sf-root.is-mobile a, .sf-root.is-mobile input, .sf-root.is-mobile select { touch-action: manipulation; }\n.sf-root.is-mobile h1 { font-size: 22px; line-height: 28px; }\n.sf-root.is-mobile .sf-section__title { font-size: 18px; line-height: 24px; }\n.sf-root.is-mobile .sf-view { gap: var(--sf-gutter); }\n\n/* поля и кнопки: 16px в полях (iOS не увеличивает страницу при фокусе), крупные цели касания */\n.sf-root.is-mobile .sf-input, .sf-root.is-mobile .sf-select { font-size: 16px; height: 42px; }\n.sf-root.is-mobile .sf-input--sm { height: 40px; }\n.sf-root.is-mobile .sf-btn { height: 42px; }\n.sf-root.is-mobile .sf-btn--sm { height: 34px; }\n.sf-root.is-mobile .sf-iconbtn { width: 38px; height: 38px; }\n.sf-root.is-mobile .sf-chip { height: 30px; padding: 0 12px; }\n.sf-root.is-mobile .sf-chip--rule { height: 24px; padding: 0 8px; }\n\n/* навигация: вкладки — отдельной строкой на всю ширину, ниже справа — версия и переключатели */\n.sf-root.is-mobile .sf-nav { gap: 6px; padding-bottom: 8px; margin-bottom: 4px; }\n.sf-root.is-mobile .sf-nav__tabs { flex: 1 0 100%; }\n.sf-root.is-mobile .sf-nav__tabs { gap: 6px; padding: 0; }\n.sf-root.is-mobile .sf-nav__tab { flex: 1 1 auto; min-width: 0; padding: 9px 10px; min-height: 38px; font-size: 12px; }\n.sf-root.is-mobile .sf-nav__right .sf-iconbtn, .sf-root.is-mobile .sf-toolbar__controls .sf-iconbtn { width: 38px; height: 38px; }\n.sf-root.is-mobile .sf-themebtn { width: 38px; height: 38px; }\n.sf-root.is-mobile .sf-sortbtn { height: 42px; padding: 0 12px; }\n.sf-root.is-mobile .sf-sortbtn span { display: none; }\n.sf-root.is-mobile .sf-tagtab { padding: 7px 12px; }\n\n/* шапка экрана: заголовок, затем поиск на всю ширину, ниже — подборки · раскладка · обновить */\n.sf-root.is-mobile .sf-toolbar { gap: 10px; }\n.sf-root.is-mobile .sf-toolbar__title { width: 100%; }\n.sf-root.is-mobile .sf-crumbs__sync { display: none; }\n.sf-root.is-mobile .sf-toolbar__controls { position: relative; width: 100%; display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 8px; }\n.sf-root.is-mobile .sf-search { grid-column: 1 / -1; min-width: 0; flex: none; }\n.sf-root.is-mobile .sf-search .sf-input-wrap { flex: 1 1 100%; }\n.sf-root.is-mobile .sf-daterange { width: 100%; }\n.sf-root.is-mobile .sf-date { flex: 1; min-width: 0; }\n.sf-root.is-mobile .sf-date .sf-date__input { width: 100%; font-size: 16px; }\n.sf-root.is-mobile .sf-dropdown { position: static; }\n.sf-root.is-mobile .sf-dropdown > .sf-btn { width: 100%; justify-content: center; background: var(--sf-surface-2); }\n.sf-root.is-mobile .sf-segmented__btn { padding: 8px 10px; }\n.sf-root.is-mobile .sf-segmented__btn span { display: none; }  /* только иконки раскладок */\n.sf-root.is-mobile .sf-menu { left: 0; right: 0; width: auto; max-width: none; top: calc(100% + 6px); max-height: 75vh; overflow-y: auto; }\n.sf-root.is-mobile .sf-menu__item { min-height: 44px; }\n.sf-root.is-mobile .sf-menu__list { max-height: 45vh; }\n\n/* быстрые режимы: одна прокручиваемая строка */\n.sf-root.is-mobile .sf-quickbar { margin: 0 -12px; padding: 2px 12px; scroll-snap-type: x proximity; scrollbar-width: none; }\n.sf-root.is-mobile .sf-quickbar::-webkit-scrollbar { display: none; }\n.sf-root.is-mobile .sf-quick { flex: none; padding: 9px 14px; min-height: 38px; scroll-snap-align: start; }\n.sf-root.is-mobile .sf-quick__sub { display: none; }\n\n/* панель фильтров: по умолчанию свёрнута до кнопки «Фильтры (N)» */\n.sf-root.is-mobile .sf-panel { padding: 12px; border-radius: var(--sf-r-lg); gap: 10px; }\n.sf-root.is-mobile .sf-panel__head { flex-direction: column; align-items: stretch; }\n.sf-root.is-mobile .sf-panel__head .sf-formula { flex: none; flex-wrap: wrap; }\n.sf-root.is-mobile .sf-formula__label { display: none; }\n.sf-root.is-mobile .sf-panel__actions { width: 100%; }\n.sf-root.is-mobile .sf-panel__actions .sf-btn { flex: 1; justify-content: center; height: 42px; }\n.sf-panel__badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--sf-r-pill); background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); font-size: 11px; }\n.sf-root.is-mobile .sf-tagbuilder__head { flex-direction: column; align-items: stretch; gap: 8px; }\n.sf-root.is-mobile .sf-tagbuilder__modes { align-self: flex-start; }\n.sf-root.is-mobile .sf-modebtn { padding: 7px 10px; }\n.sf-root.is-mobile .sf-tagadd { width: 100%; }\n.sf-root.is-mobile .sf-tagadd__input { flex: 1; width: auto; }\n.sf-root.is-mobile .sf-tagadd__btn { width: 42px; height: 42px; }\n.sf-root.is-mobile .sf-suggest { left: 0; right: 0; max-width: none; min-width: 0; }\n.sf-root.is-mobile .sf-suggest__item { min-height: 44px; }\n.sf-root.is-mobile .sf-advanced .sf-field { min-width: 100%; }\n.sf-root.is-mobile .sf-attrs__sep { display: none; }\n\n/* карточки и плитки: один столбец */\n.sf-root.is-mobile .sf-card { padding: 14px; gap: 10px; border-radius: var(--sf-r-lg); }\n.sf-root.is-mobile .sf-card:active { background: var(--sf-surface-hover); }\n.sf-root.is-mobile .sf-card__title { font-size: 18px; line-height: 26px; }\n.sf-root.is-mobile .sf-card__meta .sf-iconbtn, .sf-root.is-mobile .sf-card__stats .sf-iconbtn { width: 34px; height: 34px; }\n.sf-root.is-mobile .sf-card__footer { gap: 6px; }\n.sf-root.is-mobile .sf-audio__btn { width: 42px; height: 42px; }\n.sf-root.is-mobile .sf-video video { max-height: 260px; }\n.sf-root.is-mobile .sf-richlink { padding: 10px; }\n\n/* Timeline: дата — заголовком над карточками, без левой колонки */\n.sf-root.is-mobile .sf-timeline__group { grid-template-columns: minmax(0, 1fr); gap: 8px; }\n.sf-root.is-mobile .sf-timeline__label { position: relative; top: auto; flex-direction: row; align-items: baseline; gap: 8px; padding-left: 16px; }\n.sf-root.is-mobile .sf-timeline__dot { top: 7px; }\n.sf-root.is-mobile .sf-timeline__items { grid-template-columns: minmax(0, 1fr); border-left: 0; padding-left: 0; margin-left: 0; }\n\n/* обзор */\n.sf-root.is-mobile .sf-pulse__grid { grid-template-columns: 1fr 1fr; gap: 10px; }\n.sf-root.is-mobile .sf-pulse__grid .sf-pcard:first-child { grid-column: 1 / -1; }\n.sf-root.is-mobile .sf-pcard { padding: 14px; }\n.sf-root.is-mobile .sf-pcard__value { font-size: 26px; line-height: 32px; }\n.sf-root.is-mobile .sf-tagstrip { flex-direction: column; align-items: flex-start; }\n.sf-root.is-mobile .sf-yearly { grid-template-columns: 1fr; }\n.sf-root.is-mobile .sf-card-block { padding: 14px; border-radius: var(--sf-r-lg); }\n.sf-root.is-mobile .sf-heat__cell { width: 10px; height: 10px; }\n.sf-root.is-mobile .sf-heat__months { grid-template-columns: repeat(53, 10px); }\n.sf-root.is-mobile .sf-dist { flex-direction: column; align-items: stretch; }\n.sf-root.is-mobile .sf-insights__tools { width: 100%; justify-content: space-between; }\n.sf-root.is-mobile .sf-section__row { flex-wrap: wrap; }\n\n/* подборки */\n.sf-root.is-mobile .sf-hero--row { flex-direction: column; align-items: stretch; }\n.sf-root.is-mobile .sf-hero--row .sf-btn { width: 100%; justify-content: center; height: 44px; }\n.sf-root.is-mobile .sf-preset { padding: 14px; border-radius: var(--sf-r-lg); }\n.sf-root.is-mobile .sf-preset__titles h3 { font-size: 18px; line-height: 24px; }\n.sf-root.is-mobile .sf-preset__tools .sf-iconbtn { width: 34px; height: 34px; }\n.sf-root.is-mobile .sf-preset__glow { width: 140px; height: 140px; top: -40px; right: -40px; }\n\n/* конструктор */\n.sf-root.is-mobile .sf-studio { gap: var(--sf-gutter); }\n.sf-root.is-mobile .sf-meta { padding: 12px; }\n.sf-root.is-mobile .sf-meta .sf-field { min-width: 100%; }\n.sf-root.is-mobile .sf-actionbar { position: static; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; border-radius: var(--sf-r-lg); }\n.sf-root.is-mobile .sf-actionbar .sf-toolbar__spacer { display: none; }\n.sf-root.is-mobile .sf-actionbar .sf-btn { width: 100%; justify-content: center; height: 42px; }\n.sf-root.is-mobile .sf-actionbar .sf-btn--primary { grid-column: 1 / -1; order: -1; }\n.sf-root.is-mobile .sf-livepreview, .sf-root.is-mobile .sf-dqlpanel { padding: 12px; border-radius: var(--sf-r-lg); }\n.sf-root.is-mobile .sf-dql { font-size: 11.5px; }\n\n/* служебное */\n.sf-root.is-mobile .sf-toast { bottom: calc(76px + env(safe-area-inset-bottom)); width: calc(100% - 32px); text-align: center; }\n.sf-root.is-mobile .sf-footer { padding-top: 8px; }\n\n/* ---------- принудительный вид (кнопки 📱 / 🖥 в навигации) ---------- */\n/* Мобильный вид на широком экране: узкая «рамка» по центру, один столбец */\n.sf-root.is-forced-mobile { max-width: 430px; margin-inline: auto; box-shadow: 0 0 0 1px var(--sf-line), var(--sf-glow); }\n/* Десктопный вид на узком экране: блок не уже 760px (страницу можно прокрутить вбок), колонки по config.columns */\n.sf-root.is-forced-desktop { min-width: 760px; }\n\n.sf-fab__btn { touch-action: manipulation; }\n@media (max-width: 767px) { .sf-fab__btn { width: 48px; height: 48px; } }\n","90-custom.css":"/* 90-custom.css — ваши личные переопределения (файл подключается последним).\n   Пример: .sf-root { --sf-primary: #0ea5e9; }  .sf-card { border-radius: 14px; } */\n"},
+  readme: "# Journal Stream — плагин Obsidian\n\n**Версия 2.2.1** · [история версий](#история-версий) · исходник версии — `src/app/version.js` и `manifest.json`\n\n![Десктопная версия](img/desktop.png)\n\n![Мобильная версия](img/mobile.png)\n\n> Скриншоты сняты в headless-Chromium на тестовых данных (`tests/browser/layout_check.py --shots`); замените их своими из Obsidian, если хотите.\n\nЛента заметок в виде карточек «как в соцсети» по макетам *Obsidian Journal / Obsidian Stream*: поток (masonry / timeline), Bento-сетка,\nсмарт-подборки, конструктор фильтров с генератором DQL, обзор с пульсом месяца, поиск, мобильный интерфейс.\n**Плагин без зависимостей**: Dataview не нужен, сборщик не нужен — это обычные файлы, которые достаточно скопировать в папку плагинов.\n\n## Установка («скопировал — вставил»)\n\n1. Создайте папку `<vault>/.obsidian/plugins/journal-stream/` и положите в неё **два файла** из архива: `manifest.json` и `main.js`.\n   `main.js` — **собранный, самодостаточный**: все модули, стили и README встроены внутрь, папки `src/` и `css/` для работы не нужны (они в архиве — исходники для разработки).\n   Свои правки стилей: создайте рядом файл `css/90-custom.css` — он подключается последним.\n2. В Obsidian: **Settings → Community plugins** → отключите «Restricted mode», нажмите «Reload plugins» → включите **Journal Stream**.\n3. Откройте ленту: иконка в левой панели (ribbon), команда **«Journal Stream: Открыть ленту»** или код-блок в заметке (см. ниже).\n4. **Settings → Journal Stream** — укажите папки с заметками (по умолчанию `notes`; пусто — весь vault) и остальные параметры.\n\nСтруктура после установки:\n\n```\n.obsidian/plugins/journal-stream/\n├─ manifest.json\n├─ main.js            ← собранный файл: модули, стили и README внутри\n├─ css/90-custom.css  ← по желанию: ваши правки стилей\n└─ data.json          ← создаётся сам: настройки, подборки, избранное, предпочтения UI\n```\n\n> Плагин работает на мобильном Obsidian (`isDesktopOnly: false`). Обновление — замена файлов в папке плагина с сохранением `data.json` и перезагрузка плагина (или Obsidian). Если изменили `css/90-custom.css` — достаточно закрыть и снова открыть вкладку либо изменить любую настройку.\n\n## Как открыть ленту\n\n* **Вкладка**: ribbon-иконка, команда «Открыть ленту» или «Открыть раздел: Обзор / Лента / Бенто / Подборки / Конструктор». Вкладка запоминает раздел, фильтры и прокрутку: открыли заметку, нажали «назад» — вернулись на то же место.\n* **Блок в заметке** — встраивание ленты (например, на дашборд). Команда «Вставить блок journal-stream в заметку» добавляет заготовку.\n\n````markdown\n```journal-stream\nview: stream\ntags: мысли, daily\nexclude: архив\nperiod: 30d\nnav: false\n```\n````\n\nПараметры блока (одна строка — один параметр `ключ: значение`; все необязательны):\n\n| Параметр | Значения | Что делает |\n|---|---|---|\n| `view` | `overview` `stream` `bento` `collections` `studio` (или по-русски: Обзор, Лента, Бенто, Подборки, Конструктор) | стартовый раздел (по умолчанию — из настроек) |\n| `layout` | `masonry` \\| `timeline` | раскладка ленты |\n| `theme` | `auto` \\| `dark` \\| `light` | тема блока |\n| `nav` | `true` \\| `false` | верхняя навигация (false — «чистый» экран без вкладок) |\n| `fullWidth` | `true` \\| `false` | на всю ширину заметки |\n| `openInNewTab` | `true` \\| `false` | открывать заметку по клику на карточку в новой вкладке |\n| `popupView` | `true` \\| `false` | открывать заметку в плавающем окне просмотра |\n| `viewMode` | `auto` \\| `mobile` \\| `desktop` | принудительный вид |\n| `tags` | список через запятую | заметки с любым из тегов (ANY) |\n| `alltags` | список | заметки со всеми тегами (ALL) |\n| `exclude` | список | исключить теги (NOT) |\n| `period` | `7d` `14d` `30d` `90d` `year` `all`… | период |\n| `search` | текст | стартовый поиск |\n| `sort` | `date-desc` `date-asc` `mtime-desc` `backlinks-desc` `length-desc` `alpha-asc` | сортировка |\n| `from` / `to` | `2026-01-01` | диапазон дат |\n| `day` | `2026-10-01` | конкретный день |\n| `id` | любая строка | ключ сохранения состояния: у нескольких блоков в одной заметке задавайте разные |\n\nНеизвестный параметр или непонятная строка не ломают блок — над лентой показывается предупреждение. Можно держать несколько блоков на странице.\nСтраница с блоком по умолчанию растягивается на всю ширину (кнопка ⤢ в навигации переключает); когда вы открываете заметку кликом по карточке, полная ширина с этой страницы снимается.\n\n## Настройки\n\n**Settings → Journal Stream** (применяются сразу к открытым вкладкам; блоки в заметках — при следующей отрисовке). Все значения хранятся в `data.json`; полный список ключей — в таблице ниже.\n\n| Группа | Что настраивается |\n|---|---|\n| Новая заметка | куда складывать (корень / папка / правило с датой), имя файла, открывать ли после создания |\n| Источники | папки с заметками (по одной в строке; пусто — весь vault), исключённые папки и теги, поля даты, откуда брать время, теги избранного и цитат |\n| Вид | раздел по умолчанию, тема, «на всю ширину», открытие заметок в новой вкладке, колонки min/max, минимальная ширина карточки, порог мобильного вида, размер «страницы» (десктоп / телефон), бейдж источника |\n| Поиск и диагностика | фоновая индексация текстов, подробный лог (`debug`) |\n| Данные | «Сбросить всё» (с подтверждением) |\n\n## Экраны\n\n| view | Что это | Из макетов |\n|---|---|---|\n| `overview` | **Пульс месяца** — 4 карточки: график накопления заметок (с динамикой к прошлому месяцу), стрик с кружками последних 7 дней, связи с плотностью графа, медиа (фото / видео / аудио) + полоса трендовых тегов; **случайные озарения** (3 / 6 / 9 / 12 карточек, выбор запоминается; 🎲 перемешивает); **годовой срез** — карта активности с подписями месяцев и дней недели, легендой и сводкой (клик по дню → лента) и кольцевая диаграмма типов заметок (клик по типу → лента) | Overview & Pulse |\n| `stream` | Лента карточек: **строка поиска** (результаты сразу при вводе), меню **«Подборки»**, быстрые режимы (Все / В этот день / Рандомные 🎲 / Избранное), формула фильтра, конструктор тегов ANY/ALL/NOT, атрибуты, раскладки Masonry и Timeline | Flow Stream |\n| `bento` | Те же данные в сетке-мозаике: у каждой плитки своя высота, видео и canvas шире (2 колонки), цитаты и аудио с цветным фоном. **Порядок — слева направо, затем сверху вниз** | Bento Grid |\n| `collections` | Галерея смарт-подборок: правила, счётчик, мини-превью заметок **с двумя строками текста**; **вся карточка кликабельна и открывает подборку в Бенто** (кнопка «Лента» — в ленте); ✎ редактировать, 🗑 удалить (с подтверждением), 🎲 для случайных | Smart Collections |\n| `studio` | Конструктор: название/иконка/режим, теги, атрибуты, период, порог бэклинков, сортировка, источники, поиск; справа — живой отклик (число и время) и готовый **DQL** с копированием. Панель действий вверху: **Сохранить**, **Сохранить как новую**, **Удалить**, Сбросить, Открыть в Бенто | Query Studio / Tag Builder |\n\n## Состояние, прокрутка и сброс\n\n* **Вернулись на страницу** (ушли открыть заметку и нажали «назад»): раздел, фильтры, быстрый режим, раскладка, «Показать ещё», текст поиска и **положение прокрутки** восстанавливаются. Позиция фиксируется в момент клика по карточке, а события прокрутки, которые Obsidian генерирует при смене заметки, игнорируются; восстановление повторяется, пока карточки дорисовываются. Состояние живёт в памяти окна Obsidian и **не пишется на диск** — после перезапуска Obsidian лента стартует с чистого листа.\n* **Вход в раздел через навигацию** (Обзор → Лента → Бенто → Подборки → Фильтры) всегда начинается с дефолта: без фильтров, режим «Все», первая страница, **новый пустой конструктор**.\n* Переходы «с переносом» не сбрасывают ничего: «Открыть подборку», клик по тегу на обзоре, клик по дню на карте активности, клик по типу в диаграмме, «Редактировать» подборку.\n* На диск (в `data.json`, раздел `ui`) сохраняются только предпочтения: раскладка ленты и «на всю ширину».\n\n## Поиск\n\nПоиск **по названию или тексту** есть везде, где есть фильтры: в шапке «Ленты» и «Бенто» и отдельной строкой в панели «Фильтры». Результаты обновляются сразу при вводе (задержка 0,1 с); несколько слов — условие «И»; регистр и «ё/е» не важны.\n\nПочему раньше находились не все записи: пока тексты заметок не прочитаны, поиск видит только заголовки и теги. Теперь индексация текстов стартует **сама** вскоре после открытия ленты (`autoIndex`), одна нечитаемая заметка её не прерывает, ищется весь текст заметки (а не превью), а рядом с полем виден прогресс «индексация N/M»; по завершении результаты пересчитываются автоматически. Если в результатах меньше записей, чем ожидалось, проверьте формулу над лентой (активные условия) и кнопку «Показать ещё» (за раз показывается `pageSize` карточек). Esc или ✕ очищают поле.\n\n**Фильтр дат.** Рядом со строкой поиска два поля даты — «от» и «до». Текст, «от» и «до» — **три независимых параметра**: можно задать любой из них, любые два или все три; при изменении любого фильтр применяется сразу, границы включительны. Условия видны в формуле над лентой (каждое снимается крестиком) и попадают в DQL и в сохраняемые подборки. Дата заметки — та же, что в карточке (поле даты → имя файла → дата создания). Для больших vault индексация читает все заметки один раз за сеанс (⟳ сбрасывает индекс).\n\n## Подборки: меню, сохранение, удаление\n\n* **Меню «Подборки ▾»** в панели ленты/бенто: список сохранённых подборок со счётчиками — клик применяет подборку, не покидая экран. Внизу — поле «Название» и кнопка **Сохранить**: текущий фильтр и режим сохраняются как подборка.\n* **Удаление**: 🗑 в меню, на карточке подборки или кнопка «Удалить» в конструкторе. Первый клик превращает кнопку в «Удалить?», второй — подтверждает (через 2,5 с подтверждение снимается).\n* В **конструкторе** «Сохранить подборку» требует название; для открытой существующей подборки доступны «Сохранить изменения» и «Сохранить как новую».\n* Подборки лежат в `data.json` (`presets`) и правятся руками.\n\n## Раскладки\n\n| | Что делает |\n|---|---|\n| **Masonry** (экран «Лента») | карточки разной высоты; каждая занимает самое короткое место (при равенстве — левее), поэтому порядок читается слева направо и сверху вниз, а высота «строки» ни к чему не привязана. Число колонок — `columns.min…max` по ширине блока |\n| **Timeline** (экран «Лента») | лента по дням с вертикальной линией; внутри дня **по две карточки в ряд одинаковой высоты**, если ширины мало — по одной. Режим Flow удалён как дубликат Timeline (старое значение `flow` читается как `timeline`) |\n| **Bento** (экран «Бенто», а также «Подборки») | тот же движок плиток, но видео/canvas (и первая подборка-«герой») занимают две колонки. Число колонок — те же `columns` |\n\nРазмер текста цитат — `--sf-quote-size` (по умолчанию `calc(17px / 1.5)`), меняется в `css/90-custom.css`.\n\n## Типы карточек\n\nТип определяется автоматически (приоритет сверху вниз), либо явно через frontmatter `type: audio|video|image|quote|tasks|link|canvas|text`.\n\n| Тип | Условие | Тело карточки |\n|---|---|---|\n| video | в заметке встроено видео (`![[x.mp4]]`) | плеер + текст |\n| audio | встроено аудио (`![[x.m4a]]`) | плеер с «волной» и прогрессом + текст |\n| canvas | встроен `.canvas` | плитка «Открыть в Canvas» + текст |\n| image | встроены изображения | сетка до 4 фото в рамке 16:10, centerCrop (обрезка по центру), «+N»; при наведении не меняется |\n| quote | тег из `quoteTags` (`#цитата`…) или цитаты занимают > 40% текста | крупная цитата (`> [!quote] Автор`) + остальной текст |\n| tasks | ≥ 2 задач `- [ ]` | прогресс-бар + первые 6 задач |\n| link | внешний URL и < 45 слов | превью ссылки (домен/адрес) |\n| text | всё остальное | markdown-превью (обрезается «…»; открыть заметку целиком — клик по карточке) |\n\nВики-ссылки `[[…]]` внутри текста стилизуются как в `DESIGN.md` (моно-шрифт, фиолетовая плашка). В подборках и живом отклике заметки показываются как **rich-link** с иконкой типа, датой и числом связей.\n\n**Дата и время** в карточке показываются в формате самих заметок: «1 октября 2024, 16:12». Дата берётся из первого найденного поля `dateFields` (frontmatter), иначе из имени файла (`YYYY-MM-DD`), иначе из даты создания файла. Распознаются форматы `2024-10-01 16:12`, `2024-10-01T16:12`, `01.10.2024 16:12` и русские `1 октября 2024, 16:12` / `1 окт 2024 г. в 16:12`. Если в поле даты нет времени, оно берётся из отдельного поля `time` / `время`; можно также включить `timeFallback: \"ctime\"` (или `\"mtime\"`) — тогда время подставляется из даты создания (изменения) файла. Без времени показывается только дата.\n\n## Клики по карточке\n\nРежим «плавающее окно просмотра» (кнопка-глаз в шапке / настройка `popupView`) открывает заметку в окне чтения поверх ленты — см. v2.2.0; Ctrl/Cmd+клик всегда открывает в редакторе.\n\n* **Клик по карточке** (по свободному месту) открывает заметку; по тегу, ссылке, кнопке, плееру — срабатывает сам элемент. Вкладку выбирает настройка «открывать в новой вкладке» (кнопка в навигации, `openInNewTab`); Ctrl/Cmd+клик или средняя кнопка — всегда новая вкладка.\n* **Клик по тегу** (чип в футере карточки или `#тег` в тексте) применяет тег **на этой странице** как фильтр — глобальный поиск Obsidian не открывается. В «Обзоре» и «Подборках» клик по тегу переносит в ленту с этим фильтром.\n* `[[Вики-ссылки]]` внутри текста открываются по тем же правилам, что и заголовок.\n\n## Мобильная версия\n\nИнтерфейс подстраивается под ширину самого блока: **< 560px** — один столбец и мобильный интерфейс (`is-mobile`), **< 900px** — компактный (`is-compact`). На телефоне экран максимально освобождён — в «Ленте» и «Бенто» остаются только три вещи:\n\n1. **Разделы** — кнопки идут потоком и переносятся на новую строку, если не хватает места (никакой прокрутки); рядом круглая кнопка **⚙ «Настройки»**.\n2. **Кнопка «Фильтры (N)»** — открывает **модальное окно** со всеми фильтрами: условия «Применено», поиск и даты (от/до), режим (Все / В этот день / Рандомные / Избранное), подборки, теги (Топ / Случайные / За год / Этот день), атрибуты, условия (период, связи, сортировка, источники), порядок и вид (Новые/Старые, Masonry/Timeline). Фильтры применяются сразу; нижняя панель: «Сбросить», «Перечитать хранилище» и «Показать N заметок» (закрывает окно). Esc, ✕ или тап по затемнению тоже закрывают его.\n3. **Краткая сводка** применённых условий (подборка, режим, теги, атрибуты, поиск, даты, период…) и число заметок; тап по сводке открывает то же окно. Нет условий — «Без фильтров · сначала новые».\n\n**«Настройки»** (⚙) — окно с переключателями, которые на телефоне не занимают место в шапке: вид (авто / мобильный / десктопный), тема (как в Obsidian / светлая / тёмная), открывать заметки в новой вкладке, страница на всю ширину, версия со ссылкой на историю.\n\nОстальное на телефоне: карта активности на обзоре — за последние 26 недель и помещается в ширину; блок кода DQL переносится по строкам; длинные теги и названия сжимаются с многоточием; карточек за раз — `pageSizeMobile`; крупные цели касания; поля 16px (iOS не увеличивает страницу). **Горизонтальной прокрутки нет** — ни у страницы, ни внутри виджета (проверяется в реальном браузере, см. «Тесты»). «Конструктор» (`studio`) на телефоне сохраняет обычную панель фильтров. Оформление — `css/85-responsive.css`, `css/36-modal.css`.\n\n## Теги, сортировка и атрибуты\n\n* **Наборы тегов** (вкладки над чипами в панели фильтров): **Топ** — самые частые; **Случайные** — случайная выборка, повторный клик перемешивает; **За год** — самые частые за последние 12 месяцев; **Этот день** — теги заметок, написанных в этот день в прошлые годы. Поле ввода с автодополнением ищет по всем тегам вне зависимости от набора.\n* **Сортировка по времени**: кнопка «Новые ↓» / «Старые ↑» в шапке ленты и бенто; по умолчанию — сначала новые. Другие варианты сортировки (связи, длина, алфавит) — в «Условиях» панели и в конструкторе.\n* **Атрибуты** (С медиа, Фото, Видео, Аудио, Цитаты, Задачи, Со ссылками) — единственный способ фильтровать по виду контента; прежний ряд «Тип» убран как дублирующий.\n\n## Мобильный и десктопный вид вручную\n\nВ правой части навигации две кнопки: 📱 «мобильный вид» и 🖥 «десктопный вид». **Мобильный** показывает интерфейс как на телефоне даже на компьютере (узкая рамка по центру, один столбец, фильтры свёрнуты) — удобно проверять и настраивать. **Десктопный** показывает колонки (`columns.min…max`) и широкую шапку даже на узком экране телефона (блок не уже 760px, страницу можно прокрутить вбок). Повторный клик по включённой кнопке возвращает автоопределение по ширине. Выбор запоминается в `data.json` (`ui.viewMode`: `auto` \\| `mobile` \\| `desktop`), задать вручную можно и параметром code-блока `viewMode: mobile`.\n\n## Тема и фон\n\nКнопка темы в навигации — иконка (☾ / ☀), переключает тёмную/светлую тему виджета. Когда вы переключаете тему самого Obsidian, выбор виджета сбрасывается на «auto» и снова следует глобальной теме. У виджета нет собственного цвета фона — виден фон заметки; чтобы вернуть, добавьте в `css/90-custom.css`: `.sf-root { --sf-root-bg: var(--sf-canvas); }`.\n\n## Тема и оформление\n\nОформление построено по `dashboard.html`: тональные слои без рамок, карточки со скруглением 1rem, при наведении фон карточки становится светлее, pill-фильтры, моно-чипы правил, акцентная кнопка. Переключатель темы «Тёмная / Светлая» — в правой части навигации (запоминается); `auto` следует теме Obsidian.\n\n## Кнопка «Наверх»\n\nПосле прокрутки вниз на 400px в правом нижнем углу прокручиваемой области заметки появляется круглая кнопка ↑ (акцентный градиент); клик плавно возвращает к началу страницы. Кнопка технически живёт в `<body>` (`position: fixed`) и сама подстраивает положение под область заметки.\n\n## Формат фильтра\n\n```json\n{ \"any\": [\"мысли\", \"zettel\"], \"all\": [], \"not\": [\"архив\"],\n  \"attrs\": [\"media\", \"task\"], \"types\": [\"audio\"], \"sources\": [\"lj\"],\n  \"period\": \"30d\", \"dateFrom\": \"2026-01-01\", \"dateTo\": \"2026-05-31\", \"day\": \"2026-05-14\", \"minBacklinks\": 3, \"text\": \"\", \"sort\": \"date-desc\" }\n```\n\n* `any` — хотя бы один тег (OR); `all` — все теги (AND); `not` — ни одного (NOT). Группы соединяются через AND. Тег `a` совпадает и с `a/b`.\n* `attrs`: `media photo video audio quote task link`. `period`: `all 7d 14d 30d 3m 1y`.\n* `sort`: `date-desc date-asc mtime-desc backlinks-desc length-desc alpha-asc`.\n* Быстрый режим (`quick`): `all | today | random | favorites`, применяется после фильтра; `random` берёт `randomCount` записей, «Перемешать» меняет только seed.\n\n## Данные — файл `data.json`\n\n**Что это.** `<vault>/.obsidian/plugins/journal-stream/data.json` — единственный рабочий файл плагина: настройки, смарт-подборки, избранное/закрепы и предпочтения интерфейса (раскладка, ширина, тема, вкладка). Создаётся сам при первом запуске; его же правит вкладка настроек и интерфейс ленты.\n**Как сбросить всё в дефолт.** Кнопка **«Сбросить всё»** в настройках плагина — либо отключите плагин, **удалите `data.json`** и включите снова. Код и CSS лежат отдельно; заметки плагин **никогда не изменяет**.\n\n```json\n{\n  \"version\": 3,\n  \"appVersion\": \"2.2.1\",\n  \"settings\": { \"...\": \"настройки (см. ниже)\" },\n  \"ui\":       { \"layout\": \"masonry\", \"fullWidth\": true, \"openInNewTab\": false, \"theme\": \"dark\", \"viewMode\": \"auto\" },\n  \"presets\":  [ { \"id\": \"...\", \"name\": \"...\", \"icon\": \"bolt\", \"description\": \"...\", \"quick\": \"all\", \"filter\": { } } ],\n  \"flags\":    { \"notes/путь/к/заметке.md\": { \"favorite\": true, \"pinned\": true } }\n}\n```\n\nИзбранное и закрепы живут в `flags`. Заметка также считается избранной, если у неё `favorite: true` во frontmatter или тег из `favoriteTags`. Файл можно править руками (плагин нужно перезагрузить); после правок убедитесь, что JSON валиден.\n\n### Ключи настроек (`settings`)\n\n| Ключ | По умолчанию | Описание |\n|---|---|---|\n| `sources` | `notes` | `[{id, label, folder, enabled}]`; пустой `folder` = весь vault |\n| `excludeFolders` / `excludeTags` | `scripts`, `.obsidian`, `templates` / — | что не показывать |\n| `dateFields` | `date, Date, created, дата, Дата, datetime, …` | поля frontmatter с датой (по порядку); формат — ISO или русский («1 октября 2024, 16:12»); если нет — дата из имени файла (`2024-10-01`) или создания |\n| `timeFallback` | `none` | откуда брать время, если в дате его нет: `none` \\| `ctime` \\| `mtime` (ещё читается поле `time`/`время`) |\n| `openInNewTab` | `false` | открывать заметку по клику на карточку в новой вкладке |\n| `hideSidebar` / `restoreSidebar` | `none` / `true` | скрывать боковые панели при открытии вкладки с лентой: `none` \\| `left` \\| `right` \\| `both`; возвращать при закрытии |\n| `popupView` | `false` | открывать заметку в плавающем окне просмотра (не в редакторе); бэклинки на карточках скрыты; Ctrl/Cmd+клик — в редакторе |\n| `quoteTags`, `favoriteTags`, `favoriteField` | `цитата…`, `избранное…`, `favorite` | как распознавать цитаты и избранное |\n| `columns` | `{ \"min\": 2, \"max\": 4 }` | число колонок карточек на десктопе (masonry и бенто) |\n| `minCardWidth` | `320` | минимальная ширина карточки, px: по ней считается, сколько колонок помещается; результат ограничивается `min`/`max` |\n| `fullWidth` | `true` | на всю ширину (также кнопка ⤢ в навигации, запоминается) |\n| `newNote` | `{mode: \"folder\", folder: \"notes\", rule: \"%%FOLDER_NAME/YYYY/YYYY-MM-MMMM/YYYY-MM-DD-hh-mm\", fileName: \"YYYY-MM-DD-hh-mm\", open: true}` | куда создаётся «Новая заметка»: `mode` = `root` \\| `folder` \\| `rule`; токены правила: `YYYY MM MMMM DD D hh mm`, `%%FOLDER_NAME` = `folder` |\n| `theme` / `nav` / `defaultView` / `layout` | `auto` / `true` / `stream` / `masonry` | оформление и стартовые экраны |\n| `pageSize`, `pageSizeMobile`, `excerptChars`, `randomCount`, `insightsCount`, `insightsOptions`, `topTags` | 24, 12, 420, 12, 3, [3, 6, 9, 12], 24 | размеры выборок |\n| `singleColumnBelow` | `560` | ширина блока (px), ниже которой включается один столбец и мобильный интерфейс |\n| `concurrency` | 8 | сколько заметок читать параллельно |\n| `debug` | `false` | подробный лог восстановления прокрутки в консоль (Ctrl+Shift+I) |\n| `autoIndex` | `true` | после открытия ленты в фоне индексировать тексты заметок — поиск находит и по тексту, а не только по заголовкам и тегам |\n| `deepScan` | `false` | прочитать тела **всех** заметок в фоне при открытии (точные типы/цитаты сразу; медленнее на больших vault) |\n| `showSourceBadge` | `false` | бейдж источника на карточке (при нескольких папках) |\n| `dql.dateExpr` | `file.cday` | какое выражение даты подставлять в DQL (раздел «Конструктор» — генератор запроса для Dataview; сам плагин Dataview не использует) |\n\n> Без `deepScan` тип карточки и атрибуты «цитаты/ссылки» определяются по тегам/вложениям (из `metadataCache`), а точно — после чтения тела при отрисовке карточки; поиск по тексту использует фоновую индексацию.\n\n## Откуда берутся данные заметки\n\n| Что | Источник в Obsidian |\n|---|---|\n| дата | frontmatter (`dateFields`) → имя файла → дата создания файла |\n| заголовок | frontmatter `title`, иначе имя файла |\n| теги | теги в тексте + `tags`/`tag` во frontmatter |\n| связи / обратные ссылки | `metadataCache.resolvedLinks` (вложения и ссылки / кто ссылается) |\n| задачи | `listItems` с чекбоксами |\n| медиа | вложения из `resolvedLinks` по расширению (фото, видео, аудио, canvas) |\n| тело заметки | `vault.cachedRead` — лениво, только для показанных карточек и индексации поиска |\n\nСписок заметок перечитывается при изменениях vault (с задержкой), по кнопке ⟳ в тулбаре и командой «Перечитать хранилище».\n\n## CSS — `css/`\n\nФайлы подключаются одним `<style>` по алфавиту имён (плагин читает их из своей папки при запуске и при смене настроек):\n\n| Файл | Содержимое |\n|---|---|\n| `00-tokens.css` | **все** цвета, радиусы, шрифты (светлая + тёмная тема); `--sf-quote-size`, `--sf-surface-hover` |\n| `10-base.css` | корень, кнопки, чипы, поля ввода, пустые состояния |\n| `12-host.css` | размещение в Obsidian: вкладка плагина, code-блок, окно истории версий |\n| `15-fullwidth.css` | режим «на всю ширину» (`.is-full`, `.sf-page-full`) |\n| `20-shell.css` | навигация, тулбар, крошки, сегменты раскладок |\n| `30-filters.css` | быстрые режимы, панель фильтров, формула, тег-билдер |\n| `35-menu.css`, `36-modal.css` | поиск и меню «Подборки»; модальные окна |\n| `40-card.css` / `41-card-types.css` | карточка и тела по типам, rich-link |\n| `45-skeleton.css` | шиммеры загрузки |\n| `50-feed.css` | masonry, timeline, bento |\n| `60-overview.css`, `70-collections.css`, `80-studio.css` | соответствующие экраны |\n| `85-responsive.css` | desktop ≥1280 · tablet 768–1279 · mobile <768 |\n| `90-custom.css` | **ваши** переопределения (подключается последним) |\n\nТема `auto` следует теме Obsidian. Классы начинаются с `sf-` и не затрагивают остальной интерфейс.\n\n## Структура\n\n```\njournal-stream/\n├─ manifest.json           id, версия, minAppVersion\n├─ main.js                 СОБИРАЕТСЯ: node tools/build.js (src + css + README внутри, ничего больше не нужно)\n├─ tools/\n│  ├─ build.js             сборщик main.js (без зависимостей)\n│  └─ main.template.js     класс Plugin + CommonJS-загрузчик (из src/ или из встроенного bundle)\n├─ src/\n│  ├─ plugin/              слой Obsidian\n│  │  ├─ index.js          сборка: ядро, вид, code-блок, команды, настройки, события vault\n│  │  ├─ view.js           ItemView — вкладка «Journal Stream»\n│  │  ├─ code-block.js     ```journal-stream\n│  │  ├─ block-params.js   разбор параметров блока\n│  │  ├─ settings-tab.js   вкладка в Settings\n│  │  └─ commands.js       ribbon и команды палитры\n│  ├─ app/                 композиция приложения\n│  │  ├─ main.js           createCore(plugin) — один раз; mount(core, …) — на каждый вид/блок\n│  │  ├─ shell.js          корень, тема, переключение экранов, восстановление прокрутки, toast, освобождение ресурсов\n│  │  ├─ state.js          реактивный стор (восстановление из session, UI-предпочтения → data.json)\n│  │  ├─ version.js        версия кода (единственный источник)\n│  │  ├─ actions.js        ВСЕ изменения состояния (enterView — со сбросом, openPreset/jumpToTag — с переносом)\n│  │  └─ open-note.js      открытие заметки (Ctrl/Cmd — новая вкладка)\n│  ├─ lib/                 чистые утилиты: dom, icons, date, ru, text, random, store, async, layout, search, misc\n│  ├─ model/               post.js (страница → пост), analyzer.js (разбор тела), media-kinds.js\n│  ├─ types/               реестр типов карточек: video audio canvas image quote tasks link text\n│  ├─ filters/             state, predicates, engine, sorters, periods, attrs, quick-modes, pipeline, formula, summary, dql, presets\n│  ├─ stats/               activity (карта, стрик, легенда), period (пульс месяца), tags, types\n│  ├─ services/            db (общая база data.json), storage, notes (metadataCache → страница), posts, session, scroll,\n│  │                       indexer, css-loader, md (MarkdownRenderer), changelog, media, content, flags, presets, theme-watch, config\n│  ├─ ui/                  common, card, feed, filters, overview, collections, studio (только отрисовка и вызов ctx.actions)\n│  └─ views/               overview, stream, bento, collections, studio, feed-view (фабрика), index\n├─ css/                    см. таблицу выше\n├─ img/                    desktop.png, mobile.png — скриншоты для README\n├─ tests/                  run.js, fake-dom.js, fake-app.js, fake-obsidian.js, fixtures.js, browser/ — в Obsidian не загружаются\n└─ README.md\n```\n\nПравила слоёв: `lib`, `model`, `types`, `filters`, `stats` — чистые функции без DOM и Obsidian API (тестируются в Node); `services` — доступ к vault/metadataCache/файлам; `ui` — отрисовка и вызов `ctx.actions`; `views` — сборка экранов; `plugin` — единственный слой, который знает про `Plugin`, `ItemView`, `PluginSettingTab`.\nМодуль подключается как `require(\"lib/dom\")` (путь от `src/`); `require(\"obsidian\")` возвращает API Obsidian. Новые `.js` файлы в `src/` подхватываются автоматически — список модулей нигде не ведётся.\n\n## Как расширять\n\n* **Новый тип карточки**: `src/types/<id>.js` (`{id, label, icon, match(post, feats)}`), включите в `types/index.js` (порядок = приоритет), добавьте `ui/card/bodies/<id>.js` с `render(ctx, post, feats, el)` и перечислите в `ui/card/bodies/index.js`; стили — в `css/41-card-types.css`.\n* **Новый экран**: `views/<id>.js` → `{id, title, icon, render(ctx, el)}` (можно вернуть функцию-деструктор), добавьте в `views/index.js`.\n* **Новое условие фильтра**: функция в `filters/predicates.js`, поле в `filters/state.js` (`defaultFilter`), при необходимости — в `formula.js` и `dql.js`.\n* **Новая настройка**: значение по умолчанию в `services/config.js` + поле в `plugin/settings-tab.js`.\n* **Новая команда**: `plugin/commands.js`.\n* **Своё оформление**: `css/90-custom.css` или переменные `--sf-*` из `00-tokens.css`.\n\n## История версий\n\nНомер версии показан на странице (бейдж `v2.2.1` в навигации; при `nav: false` — внизу) и по клику открывает это окно. После обновления плагина при первом открытии показывается уведомление «обновлён: vX → vY». Версия записывается в `data.json` (поле `appVersion`).\n\n### v2.2.1 — 2026-10-27\n- **Окно просмотра — по центру с затемнением** основного контента (лёгкое размытие); клик по затемнению или Esc закрывает, окно по-прежнему можно перетаскивать и менять его размер.\n- **Скрывать боковую панель при открытии ленты**: Settings → Journal Stream → «Скрывать боковую панель» (не скрывать / левую / правую / обе, ключ `hideSidebar`) и «Возвращать панель при закрытии» (`restoreSidebar`, по умолчанию да). Действует для вкладки с лентой, не для код-блока.\n\n### v2.2.0 — 2026-10-27\n- **Плавающее окно просмотра заметки** (опция «Открывать заметки в плавающем окне» в настройках плагина, кнопка-глаз в шапке ленты, «Плавающее окно просмотра» в «Настройках» на телефоне; параметр блока `popupView: true`, ключ `popupView`). Клик по карточке показывает заметку в режиме чтения в окне по центру поверх затемнённой ленты, а не в редакторе: окно перетаскивается за заголовок, меняет размер за угол, закрывается по Esc или крестиком; на телефоне — нижняя шторка. Кнопка ↗ — открыть в редакторе; **Ctrl/Cmd+клик** по карточке — тоже в редакторе. Внутренние ссылки заметки открываются в этом же окне (кнопка «назад»), клик по тегу применяет фильтр ленты.\n- В этом режиме **ссылки вперёд и назад скрыты**: на карточках и в мини-превью подборок нет счётчика бэклинков, в шапке окна — только дата и теги.\n\n### v2.1.4 — 2026-10-23\n- Новая заметка создаётся **только с атрибутом даты** (`date`): пустое свойство `tags` больше не добавляется.\n\n### v2.1.3 — 2026-10-22\n- **Язык месяца в названиях папок — в настройках**: `newNote.folderLang`, по умолчанию **English** → `notes/2026/2026-10-October/2026-10-22-00-31`; `ru` → `2026-10-Октябрь`. Отдельно — язык месяца в дате заметки (`newNote.dateLang`, по умолчанию `ru`: «16 октября 2026, 18:14»).\n\n### v2.1.2 — 2026-10-22\n- **Дата новой заметки задаётся правилом** (Settings → «Новая заметка» → «Дата в заметке», ключ `newNote.dateRule`). По умолчанию `D MMMM YYYY, hh:mm` → `16 октября 2026, 18:14` (месяц после «D » — в родительном падеже). Токены: `YYYY`, `MM`, `MMMM`, `DD`, `D`, `hh`, `mm`. Пример пути и даты показывается в настройках.\n- **Контраст градиентных кнопок**: подпись на заливке всегда берёт `--sf-primary-on` (стили темы Obsidian больше не делают её бледной); заливка в светлой теме темнее — белый текст читается.\n\n### v2.1.1 — 2026-10-22\n- **Установка из двух файлов**: `main.js` теперь собирается (`node tools/build.js`) в самодостаточный файл — модули, CSS и README внутри; достаточно `manifest.json` + `main.js`. Исправляет `ENOENT`/«не найдена папка src/» при неполном копировании. Папки `src/`, `css/` остаются исходниками; `css/90-custom.css` рядом с `main.js` по-прежнему подхватывается.\n- Загрузчик модулей встроен в `main.js` (`tools/main.template.js`); `src/core` удалён.\n\n### v2.1.0 — 2026-10-22\n- **Кнопка «Новая заметка»** в шапке (на телефоне — «＋» рядом с «Настройками») и команда палитры. Создаёт заметку с frontmatter (`date: \"16 октября 2026, 18:14\"` — формат задаётся правилом; **других свойств и тегов нет**) и открывает её; существующий файл не затирается (добавляется суффикс `-2`).\n- **Куда складывать** — Settings → Journal Stream → «Новая заметка»: в корень vault; в папку; по правилу, например `%%FOLDER_NAME/YYYY/YYYY-MM-MMMM/YYYY-MM-DD-hh-mm` (`%%FOLDER_NAME` — папка из настроек; токены YYYY, MM, MMMM — месяц словом, DD, hh, mm). Под полями показан пример получающегося пути.\n- Выравнивание по вертикали: кнопки справа от поиска стоят на одной линии с полем поиска, правая группа шапки — по верхней строке вкладок.\n\n### v2.0.0 — 2026-10-21\n**Виджет Dataview превращён в плагин Obsidian** (установка «скопировал — вставил», без сборщика: `main.js` + `src/*`).\n- **Без Dataview.** Заметки читаются из `metadataCache` (frontmatter, теги, ссылки, задачи, `resolvedLinks` для обратных ссылок) — список пересобирается при изменениях vault.\n- **Отдельная вкладка** «Journal Stream» (ribbon-иконка и команда «Открыть ленту»); состояние и прокрутка сохраняются при переходе в заметку и возврате.\n- **Code-блок** ```` ```journal-stream ```` для встраивания в заметки: `view`, `tags`, `exclude`, `period`, `search`, `layout`, `theme`, `nav`, `fullWidth`…\n- **Вкладка настроек** в Obsidian: папки-источники, исключения, поля даты, цвета/теги, колонки, ширины, индексация, сброс. Применяется сразу.\n- **Команды**: открыть ленту, по одному разделу (Обзор / Лента / Бенто / Подборки / Конструктор), вставить блок, перечитать хранилище.\n- **Данные — `data.json`** плагина (`loadData/saveData`); удалите файл или нажмите «Сбросить» в настройках — всё вернётся к умолчаниям.\n- Окно **«История версий»** по клику на бейдж версии (берётся из этого README).\n- Корректное освобождение ресурсов при закрытии вкладки/блока (слушатели, таймеры, кнопка «Наверх»).\n- Тесты адаптированы под API плагина (+ новые для вкладки, code-блока, настроек, чтения из metadataCache).\n- **Миграция с виджета 1.x**: `data/social_feed.json` не импортируется автоматически — перенесите настройки в окно настроек плагина (подборки можно скопировать в `data.json`, раздел `presets`), старую папку `scripts/social_feed` и dataviewjs-блоки можно удалить.\n\n### v1.6.0 — 2026-10-19\nМобильный интерфейс в один экран.\n- **Лента и Бенто на телефоне** — только разделы, кнопка «Фильтры (N)» и краткая сводка применённых условий. Все фильтры (поиск, даты, режим, подборки, теги, атрибуты, условия, порядок и вид) — в **модальном окне**; фильтры применяются сразу, «Показать N» закрывает окно.\n- **Разделы потоком**: кнопки переносятся на новую строку (без прокрутки); служебные переключатели (вид, тема, вкладка, ширина, версия) вынесены в окно **«Настройки»** (⚙). Короткая подпись конструктора — «Конструктор» (не путается с кнопкой «Фильтры»).\n- **Нет горизонтальной прокрутки** на телефоне и планшете: карта активности — 26 недель на телефоне, ячейки тянутся по ширине; DQL переносится по строкам; длинные теги и названия сжимаются; вкладки переносятся. Исправлена установка CSS-переменных через `style` в `h()`.\n- **Проверка раскладки в реальном браузере** (`tests/browser/layout_check.py`, Playwright/Chromium): 8 ширин × все экраны × обе темы + стресс-данные + окна «Фильтры» и «Настройки».\n- README: скриншоты `img/desktop.png` и `img/mobile.png` в начале.\n\n### v1.5.0 — 2026-10-18\n- **Теги — «подкладки» наборов**: Топ · Случайные (повторный клик перемешивает) · За год · Этот день (теги заметок, написанных в этот день в прошлые годы). Выбранные теги всегда остаются первыми.\n- **Порядок по времени** в ленте и бенто: кнопка «Новые ↓ / Старые ↑» в шапке (по умолчанию — сначала новые).\n- **Фильтры**: остались только атрибуты, ряд «Тип» убран (он дублировал атрибуты); клик по типу в диаграмме обзора и стандартные подборки теперь ставят атрибут. Подпись «FORMULA» убрана.\n- **Панель фильтров** компактнее: переключатели «Условия» и «Свернуть/Развернуть» — только иконки (на телефоне — кнопка «Фильтры (N)»). Защита от горизонтальной прокрутки на планшете (`overflow-x: clip`, перенос диапазона дат, сжимаемые элементы шапки).\n- «В этот день» — без даты в названии кнопки.\n- **Тема**: кнопка темы — только иконка (без подсказки и подписи); при переключении темы Obsidian выбор темы в виджете сбрасывается на «auto» (глобальная тема).\n- **Фон**: у самого виджета нет цвета фона — виден фон заметки Obsidian (вернуть: `.sf-root { --sf-root-bg: var(--sf-canvas); }` в `css/90-custom.css`).\n\n### v1.4.0 — 2026-10-17\n- **Фильтр дат «от» и «до»** рядом со строкой поиска (в шапке ленты/бенто и в панели конструктора). Текст, «от» и «до» — три независимых параметра: изменение любого сразу применяет фильтр; границы включительно; каждая дата снимается крестиком в формуле. Поддержан в DQL и в сохраняемых подборках (`dateFrom`, `dateTo`).\n- **Кнопка «Наверх»** (исправление): теперь `position: fixed` в `<body>` с положением по прокручиваемой области заметки — раньше `sticky` не срабатывал, если у родителя есть `overflow`. Появляется после 400px прокрутки; при перерисовке блока и уходе со страницы не плодится и убирается.\n- **Картинки** (исправление): centerCrop — рамка фиксированных пропорций 16:10, картинка заполняет её и обрезается по центру; при наведении ничего не меняется (убраны масштаб, фильтр и зависимость от естественного размера).\n\n### v1.3.0 — 2026-10-17\n- **Верхние кнопки** (вкладки разделов, кнопки справа, «Подборки», раскладки, главная кнопка) — скруглённые «пилюли» в цвет акцента с градиентом: неактивные — мягкий градиент, активная — полная заливка. Все кнопки на месте и на телефоне (кнопку ширины больше не прячем).\n- **Мобильный / десктопный вид вручную**: кнопки 📱 и 🖥 в навигации. «Мобильный» — как на телефоне даже на компьютере (узкая рамка, один столбец, свёрнутые фильтры); «десктопный» — колонки по `columns` даже на телефоне (блок не уже 760px). Повторный клик возвращает автоопределение; выбор запоминается (`ui.viewMode`).\n- **Прокрутка при возврате** (исправление): контейнер прокрутки определяется надёжно — по событиям прокрутки, подсказке из прошлого сеанса и известным контейнерам Obsidian; «ложные» обёртки с `overflow:auto` больше не дают `scrollTop = 0` при клике по карточке. Позиция удерживается 3 с после восстановления. `debug: true` в настройках пишет ход восстановления в консоль.\n\n### v1.2.0 — 2026-10-17\n- **Обзор по макету**: «Пульс месяца» — 4 карточки с графиком накопления, стриком по 7 дням, плотностью связей и разбивкой медиа + трендовые теги; годовой срез с картой активности и диаграммой типов. Плитки «Пространства» убраны.\n- **Карта активности** получила подписи месяцев и дней недели, легенду с диапазонами, пояснение «что такое квадраты» и сводку (всего, активных дней, рекорд).\n- **Случайные озарения**: число карточек выбирается (3 / 6 / 9 / 12, `insightsCount`, `insightsOptions`), запоминается; карточки раскладываются как в ленте.\n- **Карточки**: градиентная заливка как в подборках (оттенок зависит от типа), кнопка «Читать далее» убрана — вся карточка кликабельна.\n- **Навигация**: бренд-чип «Journal Stream» убран; вкладки растянуты на всю ширину шапки (на телефоне и планшете — отдельной строкой, у «Фильтры · DQL» короткая подпись), справа — версия и переключатели.\n- **Шиммеры загрузки** вместо пустого места: стартовая заглушка до загрузки модулей, затем «скелет» ленты, пока строится экран и раскладываются карточки.\n- **Поиск**: строка «по названию или тексту» в панели фильтров конструктора; автоиндексация текстов (`autoIndex`), поиск по всему тексту заметки, ё=е, устойчивость к нечитаемым заметкам.\n- **Прокрутка при возврате** (исправление): позиция читается до перерисовки, пока идёт восстановление новые значения не сохраняются, высота виджета резервируется, восстановление «удерживается» 1.5 с; прокрутка не прыгает вверх при «Показать ещё» и смене фильтров.\n\n### v1.1.0 — 2026-10-17\nОптимизация под телефон (один столбец).\n- Адаптивность по ширине самого блока (а не окна): `is-compact` < 900px, `is-mobile` < `singleColumnBelow` (560px) — работает и в узкой боковой панели.\n- Один столбец: Masonry, Bento, Подборки; Timeline без левой колонки — дата заголовком над карточками; зазоры 14px.\n- Навигация в две строки (бренд и переключатели · вкладки с прокруткой), заголовок, поиск на всю ширину, ниже — «Подборки», раскладка, обновление (раскладки — иконками).\n- Быстрые режимы — одна прокручиваемая строка (дата в «В этот день» скрыта); панель фильтров по умолчанию свёрнута до кнопки «Фильтры (N)» с числом активных условий (`collapsed: null` = авто).\n- Крупные цели касания (38–44px), поля 16px (iOS не масштабирует страницу), меню «Подборки» и подсказки тегов — на всю ширину, действия конструктора — сеткой 2×N, обзор: метрики по две в ряд, тепловая карта открывается на свежих неделях.\n- Новые настройки: `pageSizeMobile` (12 карточек за раз), `singleColumnBelow` (560).\n\n### v1.0.0 — 2026-10-17\nПервая версионированная сборка.\n- Введено версионирование: единый источник версии `app/version.js`, бейдж версии на странице со ссылкой на эту историю, уведомление после обновления, версия в файле данных.\n- Без изменений поведения относительно 0.5.0.\n\n### v0.5.0\n- Оформление по `dashboard.html`: тональные слои без рамок, карточки 1rem, hover «на ступень светлее», pill-фильтры, моно-чипы; переключатель темы в навигации.\n- Общий движок плиток для Masonry, Bento и «Подборок»: порядок слева направо, потом сверху вниз; первая подборка — «герой» на 2 колонки.\n- Клик по карточке открывает заметку; тег (чип и `#тег` в тексте) применяется на странице; опция открытия в новой вкладке.\n- Страница на всю ширину по умолчанию, при открытии заметки по карточке ширина снимается.\n- Дата и время как в заметках («1 октября 2024, 16:12»), русские форматы дат, `time`/`timeFallback`.\n- Восстановление прокрутки при возврате на страницу (фиксация при клике, игнор сбросов Obsidian).\n- Автодополнение тегов и кнопка «+» (мобильный Enter/«Готово»); кнопка «Наверх».\n- Формула показывает все условия фильтра; пустое состояние объясняет, что применено.\n\n### v0.4.0\n- Единый рабочий файл данных `data/social_feed.json` (настройки, подборки, избранное, UI-предпочтения; удалить — сброс).\n- Состояние сохраняется при возврате в заметку; вход в раздел всегда с дефолта; новый конструктор при каждом входе.\n- Строка поиска с мгновенными результатами и фоновой индексацией текстов; меню «Подборки»; сохранение/удаление подборок (с подтверждением); панель действий конструктора.\n- Колонки `columns.min/max` и `minCardWidth`; режим Flow удалён (остался Timeline: по две карточки в ряд).\n- Пульс месяца: «Добавлено фото/видео»; цитаты мельче; подсветка карточки при наведении.\n\n### v0.3.0\n- Дата в карточках в формате заметок; Timeline ограничен по ширине; картинки не «прыгают» при наведении.\n\n### v0.2.0\n- Папка по умолчанию `notes`; режим «на всю ширину» (кнопка ⤢, параметр `fullWidth`, `cssclasses: sf-page-full`).\n\n### v0.1.0\n- Первая сборка: экраны Обзор / Лента / Бенто / Подборки / Студия, типы карточек, фильтры и генератор DQL, смарт-подборки, README и тесты.\n\n> Записи 0.1–0.5 восстановлены задним числом по порядку доработок; даты у них не указаны.\n\n## Версионирование\n\nСхема `MAJOR.MINOR.PATCH`: **PATCH** — исправления без новых возможностей; **MINOR** — новые возможности и изменения оформления, совместимые с имеющимся `data.json`; **MAJOR** — несовместимые изменения (формат `data.json`, параметры code-блока). Как выпустить версию:\n1. Поднять `VERSION` и `RELEASED` в `src/app/version.js` и `version` в `manifest.json`; после любых правок `src/`, `css/` или README — **`node tools/build.js`** (тест проверяет, что `main.js` актуален).\n2. Добавить в этот README раздел `### vX.Y.Z — дата` вверху «Истории версий» и обновить строку версии под заголовком.\n3. Запустить `node tests/run.js` — тест проверит совпадение версий в коде и `manifest.json` и наличие записи в README.\nЕсли меняется формат `data.json` — увеличить `version` в `services/db.js` и добавить миграцию там же.\n\n## Тесты\n\nЗапускаются из папки проекта (в Obsidian не загружаются).\n\n```bash\nnode tests/run.js                                    # юнит- и сценарные тесты на заглушке DOM\npython3 tests/browser/layout_check.py                # раскладка в реальном Chromium (нужен playwright)\npython3 tests/browser/layout_check.py --shots        # + скриншоты img/desktop.png и img/mobile.png\n```\n\n**Node-тесты** прогоняют чистые модули, экраны и сценарии (поиск, сессия и сброс, меню подборок, сохранение/удаление, `data.json`) и слой плагина: чтение заметок из фиктивного `metadataCache`, регистрацию вида/блока/команд/настроек, открытие и закрытие вкладки, code-блок с параметрами, вкладку настроек и сброс. Копия папки плагина кладётся во временный vault — ваш `data.json` не затрагивается.\n**Браузерная проверка** открывает страницу-имитацию Obsidian (`tests/browser/harness.html`: настоящие модули и CSS плагина, фиктивные `app`/`plugin`/`obsidian`, ~50 заметок разных типов) на ширинах 360–1440px по всем экранам, раскладкам и обеим темам, со «стресс-данными» (очень длинные названия и теги) и проверяет, что **нет горизонтальной прокрутки**; на телефоне дополнительно открываются окна «Фильтры» и «Настройки».\nТесты **не заменяют** проверку в самом Obsidian.\n\n## Ограничения и диагностика\n\n* Тесты работают на заглушках Obsidian API; запуск в настоящем Obsidian не проверялся. Если плагин не стартует — сначала проверьте, что в папке плагина рядом с `main.js` лежит папка `src/` (иначе в уведомлении будет об этом сказано); затем откройте консоль (Ctrl+Shift+I) и найдите `[journal-stream]`; в интерфейсе появится уведомление об ошибке запуска.\n* Модули выполняются через встроенный загрузчик (в `main.js` они лежат как функции; при запуске из шаблона — читаются из `src/` через `new Function`): так работает «скопировал — вставил», но такой плагин не пройдёт проверку каталога сообщества Obsidian — он рассчитан на личное использование.\n* Рендер markdown в карточках — `MarkdownRenderer` Obsidian; при сбое показывается сырой текст (`[journal-stream] markdown fallback` в консоли).\n* Медиа ищутся через `metadataCache` (по имени файла, как вики-ссылки); если файла нет — карточка покажет «файл не найден».\n* Не реализовано из макетов: Canvas View как раскладка ленты, быстрый захват мысли (⌥N), 3D-граф, пакетная AI-транскрибация.\n* Раскладки Masonry/Bento/Подборки измеряют высоту карточек в браузере и пересчитываются при изменении размеров; если плитка «съехала», нажмите ⟳.\n* Восстановление прокрутки делается повторными попытками, пока карточки дорисовываются; если вы начали прокручивать сами, попытки прекращаются. Включите `debug` в `data.json`/настройках, чтобы увидеть ход в консоли.\n* Если подборка («В этот день» и др.) показывает пустую ленту при ненулевом счётчике — посмотрите формулу над лентой: в ней отображаются **все** применённые условия с кнопкой ✕.\n* Миграция с виджета 1.x: см. заметку в v2.0.0.\n",
+};
+// main.js (шаблон; рабочий main.js собирает tools/build.js) — точка входа плагина Obsidian «Journal Stream». Тонкая обёртка: вся логика лежит в src/* и подключается
+// мини-загрузчиком (ниже) прямо из папки плагина — сборщик не нужен ("скопировал — вставил").
+// Загрузчик встроен сюда намеренно: main.js — единственный файл, без которого ничего не стартует.
+const obsidian = require("obsidian");
+
+// CommonJS-загрузчик: читает все *.js из <плагин>/src и даёт sync-require. `externals` — модули хоста, например { obsidian }.
+function createLoader({ app, root, externals = {}, bundle = null }) {
+  const adapter = app.vault.adapter;
+  const SKIP_DIRS = new Set();
+  const SKIP_FILES = new Set();
+
+  async function listJs(dir) {
+    const out = [];
+    const { files, folders } = await adapter.list(dir);
+    for (const f of files) if (f.endsWith(".js") && !SKIP_FILES.has(f)) out.push(f);
+    for (const d of folders) {
+      const name = d.split("/").pop();
+      if (!SKIP_DIRS.has(name)) out.push(...(await listJs(d)));
+    }
+    return out;
+  }
+
+  async function load() {
+    // bundle (готовый main.js из tools/build.js): модули уже внутри — файлы src/ не нужны
+    const paths = bundle ? [] : await listJs(root);
+    const sources = await Promise.all(paths.map(async (p) => [p, await adapter.read(p)]));
+    const defs = new Map();
+    for (const [p, code] of sources) defs.set(p.slice(root.length + 1).replace(/\.js$/, ""), { path: p, code });
+    if (bundle) for (const id of Object.keys(bundle.modules)) defs.set(id, { path: "journal-stream/src/" + id + ".js", fn: bundle.modules[id] });
+    const cache = new Map();
+
+    function resolve(fromId, request) {
+      if (request in externals) return "ext:" + request;
+      let id = request;
+      if (request.startsWith(".")) {
+        const base = fromId.split("/").slice(0, -1);
+        for (const part of request.split("/")) {
+          if (part === "." || part === "") continue;
+          if (part === "..") base.pop();
+          else base.push(part);
+        }
+        id = base.join("/");
+      }
+      id = id.replace(/\.js$/, "");
+      if (defs.has(id)) return id;
+      if (defs.has(id + "/index")) return id + "/index";
+      throw new Error(`[journal-stream] модуль не найден: "${request}" (импорт из "${fromId}")`);
+    }
+
+    function requireFrom(fromId, request) {
+      const id = resolve(fromId, request);
+      if (id.startsWith("ext:")) return externals[id.slice(4)];
+      if (cache.has(id)) return cache.get(id).exports;
+      const def = defs.get(id);
+      const module = { exports: {} };
+      cache.set(id, module);
+      const fn = def.fn || new Function("module", "exports", "require", def.code + "\n//# sourceURL=" + def.path);
+      fn(module, module.exports, (r) => requireFrom(id, r));
+      return module.exports;
+    }
+
+    return { require: (request) => requireFrom("<entry>", request), ids: [...defs.keys()] };
+  }
+
+  return { load };
+};
+
+module.exports = class JournalStreamPlugin extends obsidian.Plugin {
+  async onload() {
+    const adapter = this.app.vault.adapter;
+    const dir = this.manifest.dir;
+    const root = `${dir}/src`;
+    try {
+      const bundle = typeof __JS_BUNDLE__ !== "undefined" ? __JS_BUNDLE__ : null;
+      this.__bundle = bundle;
+      if (!bundle && !(await adapter.exists(`${root}/plugin/index.js`))) {
+        throw new Error(`не найдена папка src/ (ожидался файл ${root}/plugin/index.js). Скопируйте в ${dir} ВСЕ файлы и папки архива: manifest.json, main.js, src/, css/, README.md — папка src должна лежать рядом с main.js`);
+      }
+      const { require: sfRequire } = await createLoader({ app: this.app, root, externals: { obsidian }, bundle }).load();
+      this.sf = sfRequire("plugin/index");
+      await this.sf.setup(this);
+    } catch (e) {
+      console.error("[journal-stream] ошибка запуска", e);
+      new obsidian.Notice("Journal Stream: ошибка запуска — " + (e && e.message ? e.message : e), 15000);
+    }
+  }
+  onunload() {
+    try { if (this.sf) this.sf.teardown(this); } catch (e) { console.error("[journal-stream]", e); }
+  }
+};
+module.exports.createLoader = createLoader;

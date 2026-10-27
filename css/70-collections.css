@@ -1,0 +1,22 @@
+/* 70-collections.css — карточки смарт-подборок (как блоки в dashboard). Раскладка — общий движок плиток (см. 50-feed.css). */
+.sf-preset { position: relative; display: flex; flex-direction: column; gap: 12px; padding: var(--sf-pad); background: linear-gradient(155deg, var(--sf-tint) 0%, rgba(0, 0, 0, 0) 62%), var(--sf-surface); border-radius: var(--sf-r-xl); box-shadow: var(--sf-shadow); overflow: hidden; transition: background 0.18s, box-shadow 0.18s; }
+.sf-preset.is-clickable { cursor: pointer; }
+.sf-preset:hover { background: linear-gradient(155deg, var(--sf-tint) 0%, var(--sf-tint) 10%, rgba(0, 0, 0, 0) 78%), var(--sf-surface-hover); box-shadow: var(--sf-glow); }
+.sf-preset__glow { position: absolute; top: -64px; right: -64px; width: 224px; height: 224px; border-radius: 50%; background: var(--sf-primary); opacity: 0.1; filter: blur(48px); pointer-events: none; }
+.sf-preset > * { position: relative; }
+.sf-preset > .sf-preset__glow { position: absolute; }
+.sf-preset__head { display: flex; align-items: flex-start; gap: 12px; }
+.sf-preset__icon { color: var(--sf-primary); display: inline-flex; padding-top: 3px; flex: none; }
+.sf-preset__titles { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.sf-preset__titles h3 { font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.015em; }
+.sf-preset__count { align-self: flex-start; padding: 1px 8px; border-radius: var(--sf-r-pill); background: var(--sf-surface-3); color: var(--sf-primary); font-family: var(--sf-font-mono); font-size: 11px; }
+.sf-preset--hero .sf-preset__count { background: var(--sf-secondary-container); color: var(--sf-on-secondary-container); }
+.sf-preset__tools { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--sf-r); background: var(--sf-surface-2); }
+.sf-preset__tools .sf-iconbtn { width: 26px; height: 26px; }
+.sf-preset__desc { font-size: 12px; line-height: 18px; color: var(--sf-text-2); }
+.sf-preset__rules { display: flex; flex-wrap: wrap; gap: 6px; }
+.sf-preset__preview { display: flex; flex-direction: column; gap: 8px; }
+.sf-preset__foot { display: flex; align-items: center; gap: 8px; padding-top: 2px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+.sf-preset__open { display: inline-flex; align-items: center; gap: 4px; font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-primary); }
+.sf-preset:hover .sf-richlink { background: var(--sf-surface-2); }
+.sf-preset:hover .sf-richlink:hover { background: var(--sf-surface-3); }
