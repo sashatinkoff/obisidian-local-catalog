@@ -36,6 +36,7 @@ module.exports = function createFeedView({ id, title, icon, fixedLayout }) {
         if (prevH) { region.style.minHeight = prevH + "px"; clearTimeout(keepTimer); keepTimer = setTimeout(() => { region.style.minHeight = ""; }, 700); }
         const { list } = pipeline.run(posts, s, { config, flags: ctx.flags });
         top.setCount(list.length);
+        ctx.navList = list.map((p) => p.path);   // для кнопок «вперёд/назад» в окне просмотра заметки
         if (current && current.sfDispose) current.sfDispose();
         clear(region);
         current = feed(ctx, { posts: list, layout: fixedLayout || s.layout, page: s.page });
@@ -51,7 +52,7 @@ module.exports = function createFeedView({ id, title, icon, fixedLayout }) {
         const prev = unsub;
         unsub = () => { clearTimeout(t); prev(); };
       }
-      return () => { clearTimeout(keepTimer); unsub(); if (current && current.sfDispose) current.sfDispose(); top.dispose(); };
+      return () => { ctx.navList = null; clearTimeout(keepTimer); unsub(); if (current && current.sfDispose) current.sfDispose(); top.dispose(); };
     },
   };
 };

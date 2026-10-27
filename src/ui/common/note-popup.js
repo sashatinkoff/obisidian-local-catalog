@@ -11,7 +11,7 @@ const { stripFrontmatter } = require("lib/text");
 let Scope = null; try { Scope = require("obsidian").Scope || null; } catch (e) { /* вне Obsidian */ }
 
 module.exports = function createNotePopup(ctx) {
-  let win = null, parts = null, history = [], overlay = null, scope = null, pushed = false;
+  let win = null, parts = null, history = [], overlay = null, scope = null, pushed = false, seq = null;
 
   const fileOf = (linktext, source) => {
     const { app } = ctx;
@@ -23,9 +23,20 @@ module.exports = function createNotePopup(ctx) {
     if (!win) return;
     detachBack();
     if (document.removeEventListener) document.removeEventListener("keydown", onKey);
-    overlay.remove(); win = parts = overlay = null; history = [];
+    overlay.remove(); win = parts = overlay = null; history = []; seq = null;
   }
-  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const onKey = (e) => {
+    if (e.key === "Escape") { close(); return; }
+    const t = e.target, typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey) { if (e.key === "ArrowLeft") step(-1); else if (e.key === "ArrowRight") step(1); }
+  };
+  // «Вперёд/назад» по заметкам текущего представления: список (с учётом фильтров и сортировки) фиксируется в момент открытия окна.
+  const indexInSeq = () => (seq && parts ? seq.indexOf(parts.path) : -1);
+  function step(dir) {
+    const i = indexInSeq(), n = i + dir;
+    if (i < 0 || n < 0 || !seq || n >= seq.length) return;
+    history = []; show(seq[n]);
+  }
 
   // Кнопка/жест «назад» на телефоне: сначала возвращает к предыдущей заметке окна, затем закрывает окно.
   // Два независимых канала: стек областей клавиатуры Obsidian (Escape — его же использует «назад» для модальных окон)
@@ -57,7 +68,11 @@ module.exports = function createNotePopup(ctx) {
     const head = h("div", { class: "sf-npop__head" }, back, title, editBtn, closeBtn);
     const meta = h("div", { class: "sf-npop__meta" });
     const body = h("div", { class: "sf-npop__body markdown-preview-view markdown-rendered" });
-    const el = h("div", { class: "sf-npop sf-root", role: "dialog", "aria-label": "Просмотр заметки", dataset: { sfTheme: ctx.store.get().theme } }, head, meta, body);
+    const prevBtn = h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm sf-npop__prev", title: "Предыдущая заметка списка (←)", onClick: () => step(-1) }, icon("chevronLeft", { size: 15 }), h("span", null, "Назад"));
+    const nextBtn = h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm sf-npop__next", title: "Следующая заметка списка (→)", onClick: () => step(1) }, h("span", null, "Вперёд"), icon("chevronRight", { size: 15 }));
+    const pos = h("span", { class: "sf-npop__pos" });
+    const foot = h("div", { class: "sf-npop__foot" }, prevBtn, pos, nextBtn);
+    const el = h("div", { class: "sf-npop sf-root", role: "dialog", "aria-label": "Просмотр заметки", dataset: { sfTheme: ctx.store.get().theme } }, head, meta, body, foot);
     overlay = h("div", { class: "sf-npop-overlay", dataset: { sfTheme: ctx.store.get().theme }, onClick: (e) => { if (e.target === overlay) close(); } }, el);
     document.body.appendChild(overlay);
     if (document.addEventListener) document.addEventListener("keydown", onKey);
@@ -75,7 +90,7 @@ module.exports = function createNotePopup(ctx) {
         return; // внешние ссылки — штатно
       }
     });
-    return { el, title, meta, body, editBtn, back, path: null };
+    return { el, title, meta, body, editBtn, back, foot, prevBtn, nextBtn, pos, path: null };
   }
 
   function drag(el, handle) {
@@ -97,6 +112,10 @@ module.exports = function createNotePopup(ctx) {
     parts.path = file.path;
     if (history[history.length - 1] !== file.path) history.push(file.path);
     parts.back.style.display = history.length > 1 ? "" : "none";
+    const i = indexInSeq(), has = !!seq && seq.length > 1;
+    parts.foot.style.display = has ? "" : "none";
+    parts.pos.textContent = has && i >= 0 ? `${i + 1} / ${seq.length}` : "";
+    parts.prevBtn.disabled = !(has && i > 0); parts.nextBtn.disabled = !(has && i >= 0 && i < seq.length - 1);
     const post = postOf(file.path);
     parts.title.textContent = (post && post.title) || file.basename || file.path;
     parts.editBtn.onclick = null;
@@ -123,5 +142,5 @@ module.exports = function createNotePopup(ctx) {
   }
 
   ctx.onDispose(close);
-  return { open: (linktext, source) => show(fileOf(linktext, source) ? fileOf(linktext, source).path : linktext), close, isOpen: () => !!win, el: () => overlay };
+  return { open: (linktext, source) => { seq = Array.isArray(ctx.navList) && ctx.navList.length > 1 ? ctx.navList.slice() : null; return show(fileOf(linktext, source) ? fileOf(linktext, source).path : linktext); }, close, isOpen: () => !!win, el: () => overlay };
 };

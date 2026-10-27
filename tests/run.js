@@ -991,6 +991,22 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     assert.strictEqual(new Date(mk(0.5, "b").ts).getFullYear(), 2020, "дата-мусор (1970) → запасной вариант: дата создания файла");
     assert.ok(mk("1970-01-14", "c").ts >= Date.UTC(1980, 0, 1), "1970 год отбрасывается");
   });
+  await test("окно просмотра: «Назад/Вперёд» ходят по заметкам текущего представления (с учётом фильтров), ←/→ с клавиатуры", async () => {
+    const c = await mkEnv({ view: "stream", id: "popnav", popupView: true }, 1400); await wait(80);
+    const ovl = () => document.body.children.filter((n) => n.classList.contains("sf-npop-overlay") && n.isConnected);
+    const W = () => ovl()[0], title = () => W().byClass("sf-npop__title")[0].textContent, pos = () => W().byClass("sf-npop__pos")[0].textContent;
+    const order = c.byClass("sf-card__title").map((t) => t.textContent);
+    c.byClass("sf-card__title")[0].dispatch("click"); await wait(100);
+    assert.ok(ovl().length === 1 && /^1 \/ \d+$/.test(pos()), "счётчик позиции: " + pos());
+    assert.ok(W().byClass("sf-npop__prev")[0].disabled, "на первой заметке «Назад» неактивна");
+    W().byClass("sf-npop__next")[0].click(); await wait(100);
+    assert.ok(/^2 \//.test(pos()), "«Вперёд» → вторая заметка: " + pos());
+    const second = title(); assert.ok(order.includes(second));
+    document.dispatch("keydown", { key: "ArrowLeft" }); await wait(100);
+    assert.ok(/^1 \//.test(pos()), "← возвращает к первой"); document.dispatch("keydown", { key: "ArrowRight" }); await wait(100);
+    assert.strictEqual(title(), second, "→ идёт вперёд");
+    document.dispatch("keydown", { key: "Escape" }); await wait(30); assert.strictEqual(ovl().length, 0);
+  });
   await test("конструктор: из редактирования подборки можно вернуться к списку кнопкой «К подборкам»", async () => {
     const c = await mkEnv({ view: "collections", id: "studioback" }, 1400); await wait(80);
     c.byClass("sf-preset__tools")[0].byClass("sf-iconbtn").find((b) => (b.attrs.title || "").includes("конструкторе")).click(); await wait(100);

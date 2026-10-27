@@ -19,3 +19,8 @@
   .sf-npop.sf-root { width: 100vw; height: 88vh; max-width: none; max-height: none; border-radius: 16px 16px 0 0; resize: none; }
   .sf-npop__head { cursor: default; }
 }
+.sf-npop__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--sf-line); background: var(--sf-surface); }
+.sf-npop__pos { font-family: var(--sf-font-mono); font-size: 11px; color: var(--sf-text-3); }
+.sf-npop__foot .sf-btn:disabled { opacity: 0.35; pointer-events: none; }
+.sf-npop__foot .sf-btn { gap: 4px; }
+@media (max-width: 600px) { .sf-npop__foot .sf-btn { flex: 1; justify-content: center; padding: 10px; } }
