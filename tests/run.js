@@ -991,6 +991,34 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     assert.strictEqual(new Date(mk(0.5, "b").ts).getFullYear(), 2020, "дата-мусор (1970) → запасной вариант: дата создания файла");
     assert.ok(mk("1970-01-14", "c").ts >= Date.UTC(1980, 0, 1), "1970 год отбрасывается");
   });
+  await test("конструктор: из редактирования подборки можно вернуться к списку кнопкой «К подборкам»", async () => {
+    const c = await mkEnv({ view: "collections", id: "studioback" }, 1400); await wait(80);
+    c.byClass("sf-preset__tools")[0].byClass("sf-iconbtn").find((b) => (b.attrs.title || "").includes("конструкторе")).click(); await wait(100);
+    const back = c.byClass("sf-studio__back")[0]; assert.ok(back, "кнопка «К подборкам» в конструкторе");
+    back.click(); await wait(100);
+    assert.ok(c.byClass("sf-preset").length >= 1 && c.byClass("sf-studio__back").length === 0, "вернулись к списку подборок");
+    assert.ok(c.byClass("sf-nav__tab").find((t) => t.classList.contains("is-active")).textContent.includes("Подборки"));
+  });
+  await test("подборки: сортировки (количество, свежесть, активность, дата создания, название), направление и запоминание", async () => {
+    const S = R("lib/preset-sort"), now = Date.UTC(2026, 9, 27);
+    const mk = (id, name, createdAt, tss) => ({ preset: { id, name, createdAt }, stats: S.presetStats(tss.map((ts) => ({ ts })), now) });
+    const D = 86400000, items = [mk("a", "Б", 3, [now - D, now - 2 * D, now - 3 * D]), mk("b", "А", 1, [now - 100 * D]), mk("c", "В", 2, [now, now - 50 * D])];
+    const ids = (sid, dir) => S.sortPresets(items, sid, dir).map((i) => i.preset.id).join("");
+    assert.strictEqual(ids("count", "desc"), "acb"); assert.strictEqual(ids("count", "asc"), "bca");
+    assert.strictEqual(ids("fresh", "desc"), "cab", "по дате последней заметки"); assert.strictEqual(ids("active", "desc"), "acb");
+    assert.strictEqual(ids("created", "desc"), "acb"); assert.strictEqual(ids("created", "asc"), "bca");
+    assert.strictEqual(ids("name", "asc"), "bac"); assert.strictEqual(ids("manual", "asc"), "abc"); assert.strictEqual(ids("manual", "desc"), "cba");
+    const c = await mkEnv({ view: "collections", id: "collsort" }, 1400); await wait(80);
+    const titles = () => c.byClass("sf-preset__titles").map((t) => t.byClass("sf-preset__count")[0].textContent);
+    const sel = c.byClass("sf-coll__sort")[0].byClass("sf-select")[0]; assert.ok(sel, "выпадающий список сортировки");
+    const before = c.byClass("sf-preset").length; assert.ok(before >= 3);
+    sel.value = "count"; sel.dispatch("change"); await wait(80);
+    const nums = titles().map((t) => parseInt(t.replace(/\D/g, ""), 10)); assert.deepStrictEqual(nums, nums.slice().sort((a, b) => b - a), "по количеству: больше сначала " + nums);
+    assert.strictEqual(c.byClass("sf-preset").length, before, "число плиток не меняется");
+    c.byClass("sf-coll__tools")[0].byClass("sf-sortbtn")[0].click(); await wait(80);
+    const nums2 = titles().map((t) => parseInt(t.replace(/\D/g, ""), 10)); assert.deepStrictEqual(nums2, nums2.slice().sort((a, b) => a - b), "направление меняется");
+    await wait(450); assert.strictEqual(readDb().ui.collSort, "count", "сортировка запомнена");
+  });
   await test("stats/author: часы, дни недели, серии, паузы, плотный день/месяц, период", () => {
     const A = R("stats/author"), { countByDay } = R("stats/activity");
     const at = (y, m, d, hh = 0, mm = 0, timed = true) => ({ ts: new Date(y, m - 1, d, hh, mm).getTime(), hasTime: timed, size: 100 });

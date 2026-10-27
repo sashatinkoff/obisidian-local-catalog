@@ -1,7 +1,7 @@
 {
   "id": "journal-stream",
   "name": "Journal Stream",
-  "version": "2.3.5",
+  "version": "2.4.0",
   "minAppVersion": "1.4.0",
   "description": "Лента заметок в виде карточек: обзор, лента, бенто, подборки, конструктор фильтров, поиск и мобильный вид. Без Dataview.",
   "author": "sashatinkoff",

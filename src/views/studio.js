@@ -1,6 +1,7 @@
 // views/studio.js — «Фильтры · DQL»: конструктор. Каждый вход через навигацию начинается с НОВОГО конструктора;
 // редактирование существующей подборки открывается из «Подборок».
 const { h } = require("lib/dom");
+const { icon } = require("lib/icons");
 const filterPanel = require("ui/filters/filter-panel");
 const metaPanel = require("ui/studio/meta-panel");
 const actionBar = require("ui/studio/action-bar");
@@ -22,6 +23,7 @@ module.exports = {
 
     el.append(
       h("div", { class: "sf-hero" },
+        h("button", { type: "button", class: "sf-btn sf-btn--ghost sf-btn--sm sf-studio__back", title: "Вернуться к списку подборок", onClick: () => ctx.actions.enterView("collections") }, icon("arrowLeft", { size: 14 }), "К подборкам"),
         h("h1", null, draft.id ? "Редактирование подборки" : "Новый смарт-фильтр"),
         h("p", null, "Соберите условия мышкой — справа появится готовый запрос (DQL для Dataview — по желанию)")),
       bar.el,

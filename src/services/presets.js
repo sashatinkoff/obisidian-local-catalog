@@ -12,11 +12,13 @@ const DEFAULT_PRESETS = [
 
 function createPresets({ db }) {
   const get = () => db.data.presets;
+  // Подборкам без даты создания (встроенные и сохранённые старыми версиями) ставим дату появления в плагине, сохраняя их порядок.
+  { const list = get(); if (list.some((p) => !p.createdAt)) { const base = Date.now() - list.length * 1000; db.data.presets = list.map((p, i) => (p.createdAt ? p : { ...p, createdAt: base + i * 1000 })); db.save(); } }
   return {
     list: () => get(),
     get: (id) => get().find((p) => p.id === id),
     save(preset) {
-      const p = { ...preset, id: preset.id || uid("flt") };
+      const p = { ...preset, id: preset.id || uid("flt"), createdAt: preset.createdAt || Date.now() };
       const list = get(), i = list.findIndex((x) => x.id === p.id);
       db.data.presets = i >= 0 ? list.map((x, j) => (j === i ? p : x)) : [...list, p];
       db.save();

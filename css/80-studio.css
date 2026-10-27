@@ -16,3 +16,4 @@
 .sf-panel__search { display: flex; }
 .sf-panel__search .sf-search { flex: 1; max-width: none; }
 .sf-search--panel .sf-input-wrap { background: var(--sf-surface-2); }
+.sf-studio__back { margin-bottom: 10px; }
