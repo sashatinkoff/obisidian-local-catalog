@@ -26,8 +26,9 @@ function makeApp(vaultRoot) {
   const abs = (p) => path.join(vaultRoot, p);
   const v = buildVault(NOTES, { now });
   const opened = [], created = new Set(), createdFiles = {};
-  return {
-    opened, createdFiles,
+  const app = {
+    opened, createdFiles, scopes: [],
+    keymap: { pushScope(s) { this._a.scopes.push(s); }, popScope(s) { const i = this._a.scopes.indexOf(s); if (i >= 0) this._a.scopes.splice(i, 1); }, _a: null },
     vault: {
       adapter: {
         read: async (p) => fs.readFileSync(abs(p), "utf8"),
@@ -46,6 +47,8 @@ function makeApp(vaultRoot) {
     metadataCache: { ...v.metadataCache, on: () => ({}) },
     workspace: { leftSplit: { collapsed: false, collapse() { this.collapsed = true; }, expand() { this.collapsed = false; } }, rightSplit: { collapsed: false, collapse() { this.collapsed = true; }, expand() { this.collapsed = false; } }, openLinkText: (p, _s, nt) => opened.push([p, nt]), getLeavesOfType: () => [], revealLeaf: () => {}, getLeaf: () => ({ setViewState: async () => {} }) },
   };
+  app.keymap._a = app;
+  return app;
 }
 
 // Плагин-заглушка: manifest.dir, loadData/saveData (файл data.json в папке плагина) и записи регистраций.

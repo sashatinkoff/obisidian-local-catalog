@@ -8,6 +8,7 @@ function makeObsidian({ render } = {}) {
   class ItemView { constructor(leaf) { this.leaf = leaf; this.contentEl = el(); } }
   class PluginSettingTab { constructor(app, plugin) { this.app = app; this.plugin = plugin; this.containerEl = el(); } }
   class MarkdownRenderChild { constructor(containerEl) { this.containerEl = containerEl; } }
+  class Scope { constructor() { this.keys = []; } register(m, k, f) { this.keys.push({ m, k, f }); return f; } }
   class Notice { constructor(m) { notices.push(m); } }
   const comp = (kind) => { const c = { kind, handlers: [], inputEl: {}, setValue(v) { c.value = v; return c; }, setPlaceholder() { return c; }, onChange(f) { c.onChangeFn = f; return c; }, setButtonText(t) { c.text = t; return c; }, setWarning() { return c; }, onClick(f) { c.onClickFn = f; return c; }, addOption(v, l) { (c.options ||= []).push([v, l]); return c; } }; return c; };
   class Setting {
@@ -18,6 +19,6 @@ function makeObsidian({ render } = {}) {
     addDropdown(cb) { return this._add("dropdown", cb); } addButton(cb) { return this._add("button", cb); }
   }
   const MarkdownRenderer = { render: async (app, md, e) => { if (render) render(md, e); else e.append(document.createTextNode(md)); } };
-  return { Plugin, Modal, ItemView, PluginSettingTab, MarkdownRenderChild, Notice, Setting, MarkdownRenderer, __modals: modals, __notices: notices, __settings: settings };
+  return { Plugin, Modal, ItemView, PluginSettingTab, MarkdownRenderChild, Notice, Scope, Setting, MarkdownRenderer, __modals: modals, __notices: notices, __settings: settings };
 }
 if (typeof module !== "undefined") module.exports = { makeObsidian };

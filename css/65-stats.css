@@ -66,3 +66,9 @@
 .sf-root.is-mobile .sf-longest__tabs .sf-segmented { width: 100%; }
 .sf-root.is-mobile .sf-longest__tabs .sf-segmented__btn { flex: 1; justify-content: center; padding: 7px 4px; }
 .sf-root.is-mobile .sf-longest__tabs .sf-segmented__btn span { display: inline; }
+.sf-stats__years { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sf-stats__years-label { flex: none; font-family: var(--sf-font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sf-text-3); }
+.sf-stats__years .sf-select { width: auto; min-width: 220px; max-width: 100%; }
+.sf-root.is-mobile .sf-stats__years { flex-direction: column; align-items: stretch; gap: 6px; }
+.sf-root.is-mobile .sf-stats__years .sf-select { width: 100%; min-width: 0; }
+.sf-bars--years .sf-bars__tick { overflow: visible; white-space: nowrap; }

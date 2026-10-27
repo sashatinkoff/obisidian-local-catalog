@@ -953,6 +953,12 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     assert.ok(!w.textContent.includes("бэклинк") && w.byClass("sf-card__backlinks").length === 0, "в окне нет ссылок вперёд/назад");
     c.byClass("sf-card__title")[1].dispatch("click"); await wait(80);
     assert.strictEqual(win().length, 1, "окно одно: вторая заметка открывается в нём же");
+    assert.strictEqual(app.scopes.length, 1, "окно регистрирует область клавиатуры (кнопка «назад» на телефоне)");
+    app.scopes[0].keys.find((k) => k.k === "Escape").f(); await wait(20);
+    assert.strictEqual(win().length, 1, "«назад» при истории из двух заметок возвращает к предыдущей, окно остаётся");
+    app.scopes[0].keys.find((k) => k.k === "Escape").f(); await wait(20);
+    assert.strictEqual(win().length, 0, "«назад» на первой заметке закрывает окно"); assert.strictEqual(app.scopes.length, 0, "область снята");
+    c.byClass("sf-card__title")[1].dispatch("click"); await wait(80);
     c.byClass("sf-card__title")[0].dispatch("click", { ctrlKey: true }); await wait(30);
     assert.strictEqual(app.opened.length, 1, "Ctrl+клик — в редакторе");
     document.dispatch("keydown", { key: "Escape" }); await wait(20);
@@ -1011,6 +1017,11 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
     assert.strictEqual(c.byClass("sf-rec").length, 5, "пять рекордов");
     assert.ok(c.byClass("sf-longest__row").length >= 5 && c.byClass("sf-longest__row").every((r) => !r.classList.contains("sf-longest__row--skel")), "самые длинные записи загружены");
     assert.ok(c.byClass("sf-statile")[0].textContent.includes("11"), "11 заметок в тестовом vault: " + c.byClass("sf-statile")[0].textContent);
+    const ysel = c.byClass("sf-stats__years")[0].byClass("sf-select")[0]; assert.ok(ysel, "выпадающий список разреза по годам");
+    const opts = ysel.children.filter((o) => o.tagName === "OPTION"); assert.ok(opts.length >= 2 && opts[0].value === "all", "«Общее» + годы");
+    const y1 = opts[1].value; ysel.value = y1; ysel.dispatch("change"); await wait(100);
+    assert.ok(c.textContent.includes(y1 + " год"), "подзаголовок графиков называет год " + y1);
+    const ysel2 = c.byClass("sf-stats__years")[0].byClass("sf-select")[0]; ysel2.value = "all"; ysel2.dispatch("change"); await wait(100);
     c.byClass("sf-segmented__btn").find((b) => b.textContent.includes("Этот год")).click(); await wait(100);
     assert.ok(Number(c.byClass("sf-statile")[0].textContent.replace(/\D/g, "").slice(0, 2)) < 11 || true);
     assert.strictEqual(c.byClass("sf-segmented__btn").filter((b) => b.classList.contains("is-active")).length, 2, "по одной активной кнопке в периоде и в блоке длинных");
