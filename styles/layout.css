@@ -1,0 +1,19 @@
+/* ---------- Ширина на весь экран (опция fullWidth) ----------
+   Классы вешает на заметку lib/layout.js.
+   .full-width — то же имя, что в cssclasses; .book-gallery-fw — собственный класс,
+   он добавляется всегда, даже если fullWidthClasses пустой. */
+.full-width,
+.book-gallery-fw {
+    --file-line-width: 100%;
+}
+
+.full-width .markdown-source-view.is-readable-line-width .cm-sizer,
+.full-width .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.full-width.markdown-source-view.is-readable-line-width .cm-sizer,
+.full-width.markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.book-gallery-fw .markdown-source-view.is-readable-line-width .cm-sizer,
+.book-gallery-fw .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.book-gallery-fw.markdown-source-view.is-readable-line-width .cm-sizer,
+.book-gallery-fw.markdown-preview-view.is-readable-line-width .markdown-preview-sizer {
+    max-width: 100% !important;
+}
