@@ -256,6 +256,13 @@ function pickWide(list, top, cols) {
 
 function grid(list, cols) {
     if (!list.length) return `<div class="bg-empty">По этим фильтрам ничего не найдено</div>`;
+    if (cols === 1) {
+        // телефон: одна колонка, все карточки одного размера (обложка слева, текст справа)
+        const top = pickFeatured(list);
+        const ordered = top ? [top, ...list.filter((b) => b !== top)] : list;
+        const html = ordered.map((b) => tall(b, b === top ? "featured" : isLow(b) ? "low" : "normal", { ratio: 1.5 })).join("");
+        return `<div class="bg-stagger bg-stagger--phone">${html}</div>`;
+    }
     const c = Math.max(2, cols || 4);
 
     const top = pickFeatured(list);
@@ -287,7 +294,7 @@ function grid(list, cols) {
 // разной высоты, и в более низкой остаётся пустое место. Карточка над ним растягивается (растёт обложка).
 function relayout(root) {
     const st = root && root.querySelector(".bg-stagger");
-    if (!st || !st.offsetWidth) return;
+    if (!st || !st.offsetWidth || st.classList.contains("bg-stagger--phone")) return;
     const gap = parseFloat(getComputedStyle(st).columnGap) || GAP;
     const cards = [...st.children];
 

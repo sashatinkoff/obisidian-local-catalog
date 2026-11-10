@@ -36,7 +36,15 @@ const notify = (msg) => {
 // Для уже выбранного числа колонок (prev) действует запас в 48 px: когда из-за смены раскладки появляется
 // или исчезает полоса прокрутки, ширина меняется на ~15 px, и без запаса сетка бесконечно перестраивалась бы
 const COL_STEPS = [0, 0, 0, 640, 900, 1200, 1500, 1800, 2100]; // COL_STEPS[n] — минимальная ширина для n колонок
+// Телефон (мобильное приложение Obsidian): одна колонка одинаковых карточек
+const isPhone = () => {
+    try {
+        if (ctx.obsidian && ctx.obsidian.Platform && ctx.obsidian.Platform.isPhone) return true;
+        return document.body.classList.contains("is-phone");
+    } catch (e) { return false; }
+};
 function colsFor(w, prev) {
+    if (isPhone()) return 1;
     if (!prev) {
         let c = 2;
         while (c < 8 && w >= COL_STEPS[c + 1]) c++;
