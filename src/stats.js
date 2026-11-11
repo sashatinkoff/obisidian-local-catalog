@@ -1,4 +1,4 @@
-// lib/stats.js — статистика последнего месяца и «инсайт месяца» (цитата). Без DOM.
+// lib/stats.js — статистика последнего месяца и выборка карточек инсайтов. Без DOM.
 
 const { plural } = ctx.lib.utils;
 
@@ -100,9 +100,25 @@ function goalFor(year, cfg) {
 
 const topOf = (books, pick) => {
     const counts = new Map();
-    books.forEach((b) => pick(b).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1)));
+    books.forEach((b) => (pick(b) || []).forEach((v) => {
+        const value = String(v || "").trim();
+        if (value) counts.set(value, (counts.get(value) || 0) + 1);
+    }));
     const sorted = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"));
     return sorted.length ? { name: sorted[0][0], count: sorted[0][1] } : null;
+};
+
+// Топ тегов: один и тот же тег учитывается для книги только один раз.
+const topTagsOf = (books, limit = 5) => {
+    const counts = new Map();
+    books.forEach((book) => {
+        const unique = new Set((book.tags || []).map((tag) => String(tag || "").trim()).filter(Boolean));
+        unique.forEach((tag) => counts.set(tag, (counts.get(tag) || 0) + 1));
+    });
+    return [...counts]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ru"))
+        .slice(0, limit)
+        .map(([name, count]) => ({ name, count }));
 };
 
 // Размер книги по времени чтения (если времени нет — по оценке из страниц)
@@ -220,20 +236,66 @@ function progress(books, year, opts) {
         pagesPerBook: pages && inYear.filter((b) => b.pages).length ? Math.round(pages / inYear.filter((b) => b.pages).length) : null,
         pagesPlan,
         dist, scored, avg: scored ? sum / scored : null,
+        // Любимые жанр и автор: отдельно за выбранный год и за весь каталог.
         topGenre: topOf(inYear, (b) => b.genres),
         topAuthor: topOf(inYear, (b) => b.authors),
+        topGenreAllTime: topOf(books, (b) => b.genres),
+        topAuthorAllTime: topOf(books, (b) => b.authors),
+        topTags: topTagsOf(inYear),
+        topTagsAllTime: topTagsOf(books),
     };
 }
 
-// Книга для «инсайта месяца»: лучшая по оценке книга месяца, у которой есть заметки или цитата;
-// если таких нет — лучшая среди всех. Сам текст выбирает случайно lib/notes.js
-function insight(books, stats) {
-    const pick = (list) =>
-        list
-            .filter((b) => b.quote || b.noteList.length)
-            .sort((a, b) => (b.score5 ?? -1) - (a.score5 ?? -1) || b.dateMs - a.dateMs)[0];
-    const book = (stats && pick(stats.month)) || pick(books);
-    return book ? { book } : null;
+// Инсайты выбираются по доступному тексту: сначала книги с цитатой или заметками,
+// затем остальные (для них Notes.ensure попробует взять отрывок из самой заметки).
+const byInsightScore = (a, b) => (b.score5 ?? -1) - (a.score5 ?? -1) || b.dateMs - a.dateMs;
+
+async function firstWithContent(list) {
+    const Notes = ctx.lib.notes;
+    for (const book of list) {
+        await Notes.ensure(book);
+        if (Notes.content(book)) return { book };
+    }
+    return null;
 }
 
-module.exports = { SIZES, sizeOf, compute, insight, pulse, years, progress, goalFor };
+async function bestInsight(list) {
+    const books = list || [];
+    const preferred = books.filter((b) => b.quote || (b.noteList && b.noteList.length)).sort(byInsightScore);
+    const found = await firstWithContent(preferred);
+    return found || firstWithContent(books.slice().sort(byInsightScore));
+}
+
+// «Инсайт месяца»: самая высоко оценённая книга последнего месяца с доступным текстом.
+// Если подходящих книг нет — ищем среди всего каталога.
+async function insight(books, stats) {
+    return bestInsight(stats && stats.month && stats.month.length ? stats.month : books);
+}
+
+// «Инсайт года» относится к последнему году чтения, который используется и в статистике месяца.
+// По возможности не дублируем книгу из карточки месяца.
+async function yearInsight(books, stats, excludePath) {
+    if (!stats || !stats.month || !stats.month.length) return null;
+    const year = new Date(stats.month[0].dateMs).getFullYear();
+    const inYear = books.filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year);
+    const otherBooks = excludePath ? inYear.filter((b) => b.path !== excludePath) : inYear;
+    return (await bestInsight(otherBooks)) || bestInsight(inYear);
+}
+
+// Случайный инсайт — случайная книга с доступной цитатой, заметкой или отрывком.
+// Книги из двух соседних карточек исключаются, пока есть другие варианты.
+async function randomInsight(books, excludePaths) {
+    const excluded = new Set(excludePaths || []);
+    const shuffle = (list) => {
+        const result = list.slice();
+        for (let i = result.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [result[i], result[j]] = [result[j], result[i]];
+        }
+        return result;
+    };
+    const others = shuffle(books.filter((b) => !excluded.has(b.path)));
+    return (await firstWithContent(others)) || firstWithContent(shuffle(books));
+}
+
+module.exports = { SIZES, sizeOf, compute, insight, yearInsight, randomInsight, pulse, years, progress, goalFor };

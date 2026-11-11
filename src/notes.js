@@ -33,15 +33,21 @@ function buildIndex(books) {
         if (path !== b.path) index.get(b.path).set(path, { path, name: name || baseName(path) });
     };
 
-    // 1. ссылки из свойства книги «Заметки»
-    books.forEach((b) => b.noteLinks.forEach((path) => add(b, path)));
+    // Папка заметок-цитат задаётся отдельно. Если она не указана, ищем цитаты
+    // только внутри папки книг, а не по всему хранилищу.
+    const notesFolder = U.normFolder(cfg.notesFolder) || U.normFolder(cfg.folder);
+    const notesPrefix = notesFolder ? notesFolder + "/" : "";
+    const inNotesFolder = (path) => !!notesPrefix && String(path || "").startsWith(notesPrefix);
+
+    // 1. ссылки из свойства книги «Заметки», но только в разрешённой папке заметок
+    books.forEach((b) => b.noteLinks.forEach((path) => {
+        if (inNotesFolder(path)) add(b, path);
+    }));
 
     // 2. заметки с полем «Источник», указывающим на книгу
     try {
-        const folder = U.normFolder(cfg.notesFolder);
-        const prefix = folder ? folder + "/" : "";
-        for (const file of app.vault.getMarkdownFiles()) {
-            if (booksByPath.has(file.path) || (prefix && !file.path.startsWith(prefix))) continue;
+        if (notesPrefix) for (const file of app.vault.getMarkdownFiles()) {
+            if (booksByPath.has(file.path) || !inNotesFolder(file.path)) continue;
             const cache = app.metadataCache.getFileCache(file);
             const fm = cache && cache.frontmatter;
             const sourceValue = U.prop(fm, cfg.sourceField);
@@ -252,4 +258,4 @@ async function reroll(bookPath) {
     return book ? pick(book, true) : null;
 }
 
-module.exports = { buildIndex, parse, parseExcerpt, content, textLength, pick, preload, hydrate, reroll };
+module.exports = { buildIndex, parse, parseExcerpt, content, textLength, pick, ensure, preload, hydrate, reroll };

@@ -1,18 +1,31 @@
 // lib/filters.js — состояние фильтров и отбор книг. Без DOM.
 
 const { cfg } = ctx;
-const { SORTS } = ctx.lib.data;
+const { SORTS, sameGenre } = ctx.lib.data;
 
-// Фильтр по оценке (по 5-балльной шкале) — строгий: «3» это только 3.0 и 3.5, а не «3 и выше».
-// При шкале 10 баллов: 5 = 10; 4 = 8–9; 3 = 6–7; 2 = 4–5; «меньше 2» = 0–3.
-const starsOf = (b) => (b.score5 === null ? null : Math.min(5, Math.floor(b.score5 + 1e-9)));
+// Фильтр по оценке в целых звёздах.
+// Для шкал выше 5 сначала переводим оценку в звёзды и округляем к ближайшей целой:
+// на шкале 10 баллов: 2–3 = 1★ (показывается в «Менее 2»), 3–4 = 2★,
+// 5–6 = 3★, 7–8 = 4★, 9–10 = 5★.
+// Для пятибалльной шкалы сохраняем прежние диапазоны: 2.0–2.5 = 2★, 3.0–3.5 = 3★ и т. д.
+const roundToNearestStar = cfg.ratingMax > 5;
+const starsOf = (b) => {
+    if (b.score5 === null || b.score5 === undefined) return null;
+    const rounded = roundToNearestStar
+        ? Math.round(b.score5 + 1e-9)
+        : Math.floor(b.score5 + 1e-9);
+    return Math.max(0, Math.min(5, rounded));
+};
 const SCORE_FILTERS = {
     all: () => true,
     "5": (b) => starsOf(b) === 5,
     "4": (b) => starsOf(b) === 4,
     "3": (b) => starsOf(b) === 3,
     "2": (b) => starsOf(b) === 2,
-    low: (b) => b.score5 !== null && b.score5 < 2,
+    low: (b) => {
+        const stars = starsOf(b);
+        return stars !== null && stars < 2;
+    },
 };
 
 // Ключ месяца для фильтра: "2026-09"
@@ -35,7 +48,7 @@ const createState = () => ({
 function matches(b, st, q) {
     if (q && !b.searchText.includes(q)) return false;
     if (st.author !== "all" && !b.authors.includes(st.author)) return false;
-    if (st.genre !== "all" && !b.genres.includes(st.genre)) return false;
+    if (st.genre !== "all" && !b.genres.some((genre) => sameGenre(genre, st.genre))) return false;
     if (!SCORE_FILTERS[st.score](b)) return false;
     if (st.month && (!b.dateMs || monthKey(b.dateMs) !== st.month)) return false;
     if (st.tags.size) {

@@ -5,7 +5,7 @@ const { PluginSettingTab, Setting, AbstractInputSuggest } = ctx.obsidian;
 const plugin = ctx.plugin;
 
 // ---------- подсказки в полях ввода ----------
-// Папки хранилища (без служебных и скрытых), от корня; пустой вариант — всё хранилище
+// Папки хранилища (без служебных и скрытых), от корня
 function allFolders(app) {
     const list = typeof app.vault.getAllFolders === "function"
         ? app.vault.getAllFolders()
@@ -86,15 +86,15 @@ const FIELD_LABELS = {
 // Набор секций: [заголовок, [[ключ, тип, название, описание, варианты]]]
 const SECTIONS = [
     ["Данные", [
-        ["folder", "text", "Папка с книгами", "Заметки из этой папки (и подпапок) попадают в каталог. Начните вводить — появятся папки хранилища; пусто — всё хранилище."],
-        ["filterField", "text", "Свойство-флаг", "Показывать только заметки, где это свойство равно значению ниже. Пусто — не фильтровать."],
+        ["folder", "text", "Папка с книгами", "В каталог попадают только заметки из этой папки и её подпапок. Параметр folder внутри блока каталога игнорируется. Если папка не указана, каталог будет пустым."],
+        ["filterField", "text", "Свойство-фильтр", "Показывать только заметки, где это свойство равно значению ниже. Свойство «Прочитано» всегда игнорируется. Пусто — не фильтровать."],
         ["filterValue", "text", "Значение флага", "true / false или любой текст."],
         ["ratingMax", "text", "Шкала оценки", "Максимум в свойстве оценки (10, 5, 100…)."],
         ["minutesPerPage", "text", "Минут на страницу", "Если у книги нет времени чтения, оно оценивается по страницам — для размера книг в статистике."],
         ["dateFormat", "text", "Формат даты", "yyyy yy MMMM MMM MM M dd d EEEE EEE. По умолчанию dd MMMM yyyy."],
         ["dateLocale", "text", "Язык дат", "ru, en, de …"],
         ["sourceField", "text", "Свойство «Источник»", "В заметке-цитате указывает на книгу."],
-        ["notesFolder", "text", "Папка заметок-цитат", "Где искать заметки со свойством «Источник». Начните вводить — появятся папки хранилища; пусто — всё хранилище."],
+        ["notesFolder", "text", "Папка заметок-цитат", "Где искать заметки со свойством «Источник». Начните вводить — появятся папки хранилища; пусто — папка с книгами."],
     ]],
     ["План на год", [
         ["yearGoal", "text", "Книг за год", "Цель на год для инфографики: прогресс, прогноз, пунктир плана в «Пульсе». 0 — не задана."],
@@ -103,7 +103,7 @@ const SECTIONS = [
     ]],
     ["Оформление", [
         ["title", "text", "Заголовок", "Пусто — не показывать."],
-        ["showStats", "toggle", "Блок «месяц + инсайт»"],
+        ["showStats", "toggle", "Статистика месяца и инсайты"],
         ["showPulse", "toggle", "Виджет «Пульс года»"],
         ["tagsCollapsed", "toggle", "Панель тегов свёрнута"],
         ["featured", "toggle", "Главная карточка для лучшей книги"],
@@ -166,7 +166,7 @@ class BookGallerySettingTab extends PluginSettingTab {
                             if (key === "yearGoal" || key === "yearGoalPages") S[key] = Math.max(0, parseInt(String(v).replace(/\D/g, ""), 10) || 0);
                             save();
                         });
-                        if (isFolder && t.setPlaceholder) t.setPlaceholder("Всё хранилище");
+                        if (isFolder && t.setPlaceholder) t.setPlaceholder(key === "folder" ? "Укажите папку с книгами" : "Папка с книгами по умолчанию");
                         if (Suggest && t.inputEl && isFolder) new Suggest(this.app, t.inputEl, () => allFolders(this.app), true);
                         if (Suggest && t.inputEl && PROPERTY_KEYS.has(key)) new Suggest(this.app, t.inputEl, () => allProperties(this.app));
                     });

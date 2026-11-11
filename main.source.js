@@ -151,7 +151,7 @@ module.exports = class BookGalleryPlugin extends Plugin {
         this.addCommand({
             id: "insert-book-gallery",
             name: "Вставить блок каталога книг в заметку",
-            editorCallback: (editor) => editor.replaceSelection("```" + CODE_BLOCK + "\nfolder: " + (this.settings.folder || this.defaults.folder) + "\n```\n"),
+            editorCallback: (editor) => editor.replaceSelection("```" + CODE_BLOCK + "\n```\n"),
         });
         this.addCommand({ id: "refresh-book-gallery", name: "Обновить каталоги книг", callback: () => this.refreshAll(true) });
 

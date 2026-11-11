@@ -166,11 +166,44 @@ const sameFlag = (value, want) => {
     return String(value) === String(want);
 };
 
-// Заметки из папки книг (с подпапками), для которых есть кэш метаданных
+// Свойство «Прочитано» не участвует в отборе: наличие или значение этого поля
+// не должно влиять на попадание книги в каталог. Другие пользовательские фильтры сохраняются.
+const isIgnoredFilterField = (field) =>
+    String(field ?? "").trim().normalize("NFC").toLocaleLowerCase("ru") === "прочитано";
+
+// Проверка принадлежности пути папке с учётом границы сегмента.
+function isInFolder(path, folder) {
+    const p = String(path || "").replace(/^\/+|\/+$/g, "");
+    const f = U.normFolder(folder);
+    return !!f && (p === f || p.startsWith(f + "/"));
+}
+
+// Книги берутся только из дерева выбранной папки. Обходим объект TFolder, а не всё
+// хранилище: это исключает соседние папки и не зависит от побочных поисков заметок-цитат.
+// Подпапки книг поддерживаются, но отдельная папка заметок-цитат исключается из каталога.
+// Пустая/несуществующая папка не должна превращать каталог в список всего хранилища.
 function bookFiles() {
     const folder = U.normFolder(cfg.folder);
-    const prefix = folder ? folder + "/" : "";
-    return app.vault.getMarkdownFiles().filter((f) => !prefix || f.path.startsWith(prefix));
+    if (!folder) return [];
+
+    const root = app.vault.getAbstractFileByPath(folder);
+    if (!root || !Array.isArray(root.children)) return [];
+
+    const notesFolder = U.normFolder(cfg.notesFolder);
+    const excludeNotesFolder = !!notesFolder && notesFolder !== folder && isInFolder(notesFolder, folder);
+    const result = [];
+    const visit = (node) => {
+        if (!node || !node.path) return;
+        // Если папка заметок-цитат вложена в папку книг, не считаем её книги.
+        if (excludeNotesFolder && isInFolder(node.path, notesFolder)) return;
+        if (Array.isArray(node.children)) {
+            node.children.forEach(visit);
+        } else if (node.extension === "md" && isInFolder(node.path, folder)) {
+            result.push(node);
+        }
+    };
+    root.children.forEach(visit);
+    return result;
 }
 
 // Загрузить книги и один раз привести к удобному для отрисовки виду
@@ -183,7 +216,10 @@ function loadBooks() {
     for (const file of bookFiles()) {
         const cache = app.metadataCache.getFileCache(file);
         const fm = (cache && cache.frontmatter) || {};
-        if (cfg.filterField && !sameFlag(U.prop(fm, cfg.filterField), cfg.filterValue)) continue;
+        // Заметки-цитаты с полем «Источник» — не самостоятельные книги каталога.
+        if (U.prop(fm, cfg.sourceField)) continue;
+        if (cfg.filterField && !isIgnoredFilterField(cfg.filterField) &&
+            !sameFlag(U.prop(fm, cfg.filterField), cfg.filterValue)) continue;
 
         const title = String(U.toArray(U.prop(fm, F.title))[0] || file.basename);
         const authors = U.splitList(U.prop(fm, F.author));
@@ -249,8 +285,49 @@ function loadBooks() {
     return books;
 }
 
-// Отсортированные уникальные значения поля (авторы, жанры, теги) для фильтров
-const uniqueValues = (books, key) =>
-    Array.from(new Set(books.flatMap((b) => b[key]))).sort((a, b) => a.localeCompare(b, "ru"));
+// Жанры сравниваются без учёта регистра и формы Unicode.
+const normalizeGenre = (value) => String(value ?? "").trim().normalize("NFC").toLocaleLowerCase("ru-RU");
+const sameGenre = (a, b) => normalizeGenre(a) === normalizeGenre(b);
 
-module.exports = { SORTS, EMPTY_COVER, starsHtml, fmtScore, loadBooks, uniqueValues, linkTarget };
+// Для списка жанров выбираем единое отображаемое написание.
+// Если есть вариант с обычной капитализацией («Автобиография»), предпочитаем его;
+// если все варианты строчные — делаем заглавной первую букву.
+function uniqueGenres(books) {
+    const groups = new Map();
+    for (const book of books) {
+        for (const raw of book.genres || []) {
+            const value = String(raw ?? "").trim();
+            const key = normalizeGenre(value);
+            if (!key) continue;
+            if (!groups.has(key)) groups.set(key, new Set());
+            groups.get(key).add(value);
+        }
+    }
+
+    const capitalizeInitial = (value) => {
+        const chars = Array.from(value);
+        if (!chars.length) return value;
+        chars[0] = chars[0].toLocaleUpperCase("ru-RU");
+        return chars.join("");
+    };
+
+    return Array.from(groups.values()).map((variants) => {
+        const values = Array.from(variants);
+        const preferred = values.find((value) =>
+            value[0] === value[0].toLocaleUpperCase("ru-RU") &&
+            value !== value.toLocaleUpperCase("ru-RU")
+        );
+        if (preferred) return preferred;
+
+        const lower = values.find((value) => value === value.toLocaleLowerCase("ru-RU"));
+        return capitalizeInitial(lower || values.sort((a, b) => a.localeCompare(b, "ru"))[0]);
+    }).sort((a, b) => a.localeCompare(b, "ru", { sensitivity: "base" }));
+}
+
+// Отсортированные уникальные значения поля (авторы, жанры, теги) для фильтров.
+// Только жанры объединяются без учёта регистра; авторы и теги сохраняют прежнее поведение.
+const uniqueValues = (books, key) => key === "genres"
+    ? uniqueGenres(books)
+    : Array.from(new Set(books.flatMap((b) => b[key]))).sort((a, b) => a.localeCompare(b, "ru"));
+
+module.exports = { SORTS, EMPTY_COVER, starsHtml, fmtScore, loadBooks, uniqueValues, normalizeGenre, sameGenre, linkTarget };

@@ -1,4 +1,4 @@
-// lib/templates.js — HTML заголовка, блока статистики, «Пульса» года и панели фильтров.
+// lib/templates.js — HTML заголовка, статистики и инсайтов, «Пульса» года и панели фильтров.
 // Без логики событий: клики ловит ui.js по атрибутам data-action.
 
 const { cfg } = ctx;
@@ -24,7 +24,7 @@ function header(total) {
 </header>`;
 }
 
-// ---------- статистика месяца и инсайт ----------
+// ---------- статистика месяца и инсайты ----------
 // Мини-график: нарастающий итог по дням месяца
 function sparkline(series) {
     const W = 220, H = 60, pad = 4;
@@ -45,7 +45,24 @@ function sparkline(series) {
 </svg>`;
 }
 
-function stats(s, insight) {
+function insightCard(insight, label) {
+    if (!insight || !insight.book) return "";
+    const b = insight.book;
+    const c = Notes.content(b);
+    const text = c ? (c.source === "excerpt" ? c.quote : `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}»`) : "";
+    const target = { path: b.path, name: b.authorText ? `${b.title} — ${b.authorText}` : b.title };
+    return `
+<div class="bg-stat bg-stat--insight" data-book="${esc(b.path)}" data-role="insight">
+    <div class="bg-stat-head">
+        <span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon("quote")}</span>${label}</span>
+        <span class="bg-eyebrow-ico">${icon("link")}</span>
+    </div>
+    <div class="bg-insight-text">${text ? esc(text) : "…"}</div>
+    <a class="bg-insight-link bg-mono" href="#" data-action="open" data-path="${esc(target.path)}">${icon("file")}<span>${esc(target.name)}</span></a>
+</div>`;
+}
+
+function stats(s, insights) {
     if (!s) return "";
 
     const record = s.record
@@ -78,25 +95,14 @@ function stats(s, insight) {
     ${sparkline(s.series)}
 </div>`;
 
-    let insightCard = "";
-    if (insight) {
-        const b = insight.book;
-        const c = Notes.content(b);
-        const text = c ? (c.source === "excerpt" ? c.quote : `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}»`) : "";
-        // подпись — книга и автор, а не название заметки; клик открывает книгу
-        const target = { path: b.path, name: b.authorText ? `${b.title} — ${b.authorText}` : b.title };
-        insightCard = `
-<div class="bg-stat bg-stat--insight" data-book="${esc(b.path)}" data-role="insight">
-    <div class="bg-stat-head">
-        <span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon("quote")}</span>Инсайт месяца</span>
-        <span class="bg-eyebrow-ico">${icon("link")}</span>
-    </div>
-    <div class="bg-insight-text">${text ? esc(text) : "…"}</div>
-    <a class="bg-insight-link bg-mono" href="#" data-action="open" data-path="${esc(target.path)}">${icon("file")}<span>${esc(target.name)}</span></a>
-</div>`;
-    }
+    const year = s.month && s.month.length ? new Date(s.month[0].dateMs).getFullYear() : "";
+    const cards = [
+        insightCard(insights && insights.month, "Инсайт месяца"),
+        insightCard(insights && insights.year, `Инсайт года${year ? ` · ${year}` : ""}`),
+        insightCard(insights && insights.random, "Случайный инсайт"),
+    ].filter(Boolean).join("");
 
-    return `<section class="bg-stats">${monthCard}${insightCard}</section>`;
+    return `<section class="bg-stats">${monthCard}${cards}</section>`;
 }
 
 // ---------- «Пульс прочитанных за год» ----------
@@ -215,7 +221,7 @@ function panel({ authors, genres, view, tagsOpen }) {
         <div class="bg-field">
             <div class="bg-label-row">
                 <div class="bg-label bg-mono">${icon("star")}Фильтр по оценке</div>
-                <span class="bg-hint bg-mono">шкала 0–5</span>
+                <span class="bg-hint bg-mono">${cfg.ratingMax > 5 ? "округление к ближайшей звезде" : "шкала 0–5"}</span>
             </div>
             <div class="bg-chips" data-zone="scores"></div>
         </div>
@@ -440,17 +446,36 @@ function progress(P) {
             );
         }
 
-        // 6. любимые жанр и автор
-        if (P.topGenre || P.topAuthor) {
-            const fav = (ico, label, top, field) =>
-                top
-                    ? `<button type="button" class="bg-fav" data-action="set-filter" data-field="${field}" data-value="${esc(top.name)}" title="Показать книги: ${esc(top.name)}">
-                        <span class="bg-fav-ico">${icon(ico)}</span><span class="bg-fav-body"><span class="bg-meta-k bg-mono">${label}</span><span class="bg-fav-name">${esc(top.name)}</span></span><span class="bg-fav-n bg-mono">${top.count}</span></button>`
-                    : "";
-            cards.push(
-                pcard("bg-pcard--fav", "shapes", "Чаще всего", `<div class="bg-favs">${fav("shapes", "Жанр", P.topGenre, "genre")}${fav("user", "Автор", P.topAuthor, "author")}</div>`, "")
-            );
-        }
+    }
+
+    // 6. любимые жанр и автор: весь каталог и выбранный в «Пульсе» год.
+    const yearLabel = P.year === new Date().getFullYear() ? "В этом году" : `В ${P.year} году`;
+    const fav = (ico, label, top, field) =>
+        top
+            ? `<button type="button" class="bg-fav" data-action="set-filter" data-field="${field}" data-value="${esc(top.name)}" title="Показать книги: ${esc(top.name)}">
+                <span class="bg-fav-ico">${icon(ico)}</span><span class="bg-fav-body"><span class="bg-meta-k bg-mono">${label}</span><span class="bg-fav-name">${esc(top.name)}</span></span><span class="bg-fav-n bg-mono">${top.count}</span></button>`
+            : "";
+    const favoriteBody = (genre, author) => `<div class="bg-favs">${fav("shapes", "Жанр", genre, "genre")}${fav("user", "Автор", author, "author")}</div>`;
+
+    if (P.topGenreAllTime || P.topAuthorAllTime) {
+        cards.push(pcard("bg-pcard--fav", "shapes", "Чаще всего", favoriteBody(P.topGenreAllTime, P.topAuthorAllTime), ""));
+    }
+    if (P.count && (P.topGenre || P.topAuthor)) {
+        cards.push(pcard("bg-pcard--fav", "shapes", yearLabel, favoriteBody(P.topGenre, P.topAuthor), ""));
+    }
+
+    // 7. самые популярные теги: за весь период и за выбранный год.
+    const tagRows = (items) => `<div class="bg-favs">${items.map((tag) => {
+        const display = tag.name.replace(/^#/, "");
+        return `<button type="button" class="bg-fav" data-action="set-filter" data-field="tag" data-value="${esc(tag.name)}" title="Показать книги с тегом ${esc(tag.name)}">
+            <span class="bg-fav-ico">${icon("hash")}</span><span class="bg-fav-body"><span class="bg-fav-name">${esc(display)}</span></span><span class="bg-fav-n bg-mono">${tag.count}</span></button>`;
+    }).join("")}</div>`;
+
+    if (P.topTagsAllTime && P.topTagsAllTime.length) {
+        cards.push(pcard("bg-pcard--fav bg-pcard--tags", "hash", "Популярные теги", tagRows(P.topTagsAllTime), ""));
+    }
+    if (P.count && P.topTags && P.topTags.length) {
+        cards.push(pcard("bg-pcard--fav bg-pcard--tags", "hash", `Популярные теги · ${yearLabel.toLowerCase()}`, tagRows(P.topTags), ""));
     }
 
     return `<section class="bg-progress">${cards.join("")}</section>`;

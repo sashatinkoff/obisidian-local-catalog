@@ -2,7 +2,7 @@
 
 const { cfg, app } = ctx;
 const U = ctx.lib.utils;
-const { uniqueValues } = ctx.lib.data;
+const { uniqueValues, sameGenre } = ctx.lib.data;
 const Stats = ctx.lib.stats;
 const Filters = ctx.lib.filters;
 const T = ctx.lib.templates;
@@ -70,22 +70,15 @@ async function addBook() {
             path = `${folder ? folder + "/" : ""}Новая книга${n > 1 ? " " + n : ""}.md`;
         } while (app.vault.getAbstractFileByPath(path));
 
-        // все свойства из настроек (имена полей), включая теги и время чтения: пустые значения можно сразу заполнить
+        // Для новой книги создаём только основные свойства каталога.
         const lines = [
             "---",
             `${F.title}: `,
             `${F.author}: `,
             `${F.genre}: `,
             F.tags ? `${F.tags}: []` : null,
-            `${F.rating}: `,
             `${F.date}: ${localDate()}`,
-            F.time ? `${F.time}: ` : null,
-            F.pages ? `${F.pages}: ` : null,
-            `${F.cover}: `,
-            F.quote ? `${F.quote}: ` : null,
-            F.notes ? `${F.notes}: ` : null,
-            F.label ? `${F.label}: ` : null,
-            cfg.filterField ? `${cfg.filterField}: ${cfg.filterValue}` : null,
+            `${F.rating}: `,
             "---",
             "",
         ].filter((l) => l !== null);
@@ -116,7 +109,7 @@ async function mount(container, books, opts) {
     const savedTags = store.get(tagsKey);
     let tagsOpen = typeof keep.tagsOpen === "boolean" ? keep.tagsOpen : savedTags === "open" ? true : savedTags === "closed" ? false : !cfg.tagsCollapsed;
 
-    // заметки книг нужны до статистики: от них зависят счётчики и «инсайт месяца»
+    // заметки книг нужны до статистики и трёх карточек инсайтов
     Notes.buildIndex(books);
     // тексты читаются заранее: по их объёму решается, какие книги получат большую карточку
     await Notes.preload(books, 2500);
@@ -125,8 +118,17 @@ async function mount(container, books, opts) {
 
     const state = keep.state || Filters.createState();
     const allTags = uniqueValues(books, "tags");
+    const genreOptions = uniqueValues(books, "genres");
+    // Восстановленное значение фильтра приводим к единому написанию из списка.
+    if (state.genre !== "all") {
+        state.genre = genreOptions.find((genre) => sameGenre(genre, state.genre)) || "all";
+    }
     const stats = cfg.showStats ? Stats.compute(books) : null;
-    const insight = cfg.showStats ? Stats.insight(books, stats) : null;
+    const monthInsight = cfg.showStats && stats ? await Stats.insight(books, stats) : null;
+    const yearInsight = cfg.showStats && stats ? await Stats.yearInsight(books, stats, monthInsight && monthInsight.book.path) : null;
+    const randomInsight = cfg.showStats && stats
+        ? await Stats.randomInsight(books, [monthInsight && monthInsight.book.path, yearInsight && yearInsight.book.path].filter(Boolean))
+        : null;
     const years = Stats.years(books);
     let pulseYear = years.includes(keep.pulseYear) ? keep.pulseYear : years[0];
     const sync = () => Object.assign(keep, { state, view, tagsOpen, pulseYear });
@@ -136,10 +138,10 @@ async function mount(container, books, opts) {
     const root = U.el("div", cfg.coverFit === "contain" ? "bg-root bg-root--fit-contain" : "bg-root");
     root.innerHTML =
         T.header(books.length) +
-        T.stats(stats, insight) +
+        T.stats(stats, { month: monthInsight, year: yearInsight, random: randomInsight }) +
         `<div data-zone="pulse"></div>` +
         `<div data-zone="progress"></div>` +
-        T.panel({ authors: uniqueValues(books, "authors"), genres: uniqueValues(books, "genres"), view, tagsOpen }) +
+        T.panel({ authors: uniqueValues(books, "authors"), genres: genreOptions, view, tagsOpen }) +
         `<div class="bg-results" data-zone="results"></div>` +
         (cfg.showFooter ? T.footer(books.length, loadMs, books.coverStats) : "");
     container.appendChild(root);
@@ -175,9 +177,9 @@ async function mount(container, books, opts) {
     function renderPulse() {
         const goal = years.length ? Stats.goalFor(pulseYear, cfg) : 0;
         zones.pulse.innerHTML = cfg.showPulse && years.length ? T.pulse(Stats.pulse(books, pulseYear), state.month, goal ? goal / 12 : 0) : "";
-        // инфокарточки о прогрессе: за тот же год, что выбран в «Пульсе»; без книг показываем только план
+        // Годовые показатели — за выбранный в «Пульсе» год; общие карточки показываем и для книг без даты.
         zones.progress.innerHTML =
-            cfg.showProgress !== false && (years.length || cfg.yearGoal > 0)
+            cfg.showProgress !== false && (years.length || cfg.yearGoal > 0 || books.length)
                 ? T.progress(Stats.progress(books, pulseYear || new Date().getFullYear(), { goal, goalPages: Number(cfg.yearGoalPages) || 0 }))
                 : "";
     }
@@ -341,12 +343,22 @@ async function mount(container, books, opts) {
                 return;
             }
             if (action === "set-filter") {
-                // клик по «любимому» жанру или автору включает соответствующий фильтр
+                // клик по жанру, автору или тегу включает соответствующий фильтр
                 const field = actionEl.dataset.field;
                 if (field === "author" || field === "genre") {
-                    state[field] = state[field] === actionEl.dataset.value ? "all" : actionEl.dataset.value;
+                    const value = field === "genre"
+                        ? (genreOptions.find((genre) => sameGenre(genre, actionEl.dataset.value)) || actionEl.dataset.value)
+                        : actionEl.dataset.value;
+                    const isSelected = field === "genre"
+                        ? state.genre !== "all" && sameGenre(state.genre, value)
+                        : state.author === value;
+                    state[field] = isSelected ? "all" : value;
                     const select = root.querySelector(`[data-filter="${field}"]`);
                     if (select) select.value = state[field];
+                    update();
+                } else if (field === "tag") {
+                    const tag = actionEl.dataset.value;
+                    state.tags.has(tag) ? state.tags.delete(tag) : state.tags.add(tag);
                     update();
                 }
                 return;
@@ -383,7 +395,7 @@ async function mount(container, books, opts) {
     });
 
     update();
-    Notes.hydrate(root, Cards.fill); // инсайт месяца
+    Notes.hydrate(root, Cards.fill); // карточки инсайтов и тексты книг
 }
 
 module.exports = { mount };

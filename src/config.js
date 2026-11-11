@@ -1,10 +1,10 @@
-// src/config.js — параметры по умолчанию и слияние: значения по умолчанию < настройки плагина < параметры блока.
+// src/config.js — настройки по умолчанию, настройки плагина и переопределения блока. Папка книг задаётся только в настройках плагина.
 
 const defaults = {
     // --- данные ---
-    folder: "Прочитанные книги",      // папка с заметками о книгах (подпапки включены)
-    filterField: "Прочитано",         // поле-флаг; null или "" — не фильтровать
-    filterValue: true,                // нужное значение флага
+    folder: "Прочитанные книги",      // обязательная папка с заметками о книгах (подпапки включены)
+    filterField: "",                   // необязательный пользовательский фильтр; «Прочитано» всегда игнорируется
+    filterValue: true,                // нужное значение пользовательского фильтра
     fields: {                         // имена свойств во frontmatter
         title: "Название",
         author: "Автор",
@@ -28,11 +28,11 @@ const defaults = {
 
     // --- заметки и цитаты ---
     sourceField: "Источник",          // свойство заметки-цитаты, указывающее на книгу (название или ссылка)
-    notesFolder: null,                // папка с заметками-цитатами; null — искать по всему хранилищу
+    notesFolder: null,                // папка с заметками-цитатами; null — искать в папке книг
 
     // --- оформление ---
     title: "Каталог прочитанных книг", // заголовок над галереей; "" — не показывать
-    showStats: true,                  // блок «месяц + инсайт»
+    showStats: true,                  // статистика месяца и три карточки инсайтов
     showPulse: true,                  // виджет «Пульс прочитанных за год»
     showProgress: true,               // инфокарточки о прогрессе под «Пульсом года»
     yearGoal: 0,                      // план на год, книг (0 — не задан)
@@ -74,13 +74,22 @@ const defaults = {
 function build(...layers) {
     const out = Object.assign({}, defaults);
     out.fields = Object.assign({}, defaults.fields);
+
+    // Папка книг — глобальная настройка плагина. Не позволяем старому параметру
+    // `folder` в блоке ```book-gallery подменить её (например, на Book Notes).
+    const settings = layers[0] && typeof layers[0] === "object" ? layers[0] : {};
+    const configuredFolder = Object.prototype.hasOwnProperty.call(settings, "folder")
+        ? settings.folder
+        : defaults.folder;
+
     layers.forEach((layer) => {
         if (!layer || typeof layer !== "object") return;
         Object.keys(layer).forEach((k) => {
             if (k === "fields") Object.assign(out.fields, layer.fields || {});
-            else if (layer[k] !== undefined) out[k] = layer[k];
+            else if (k !== "folder" && layer[k] !== undefined) out[k] = layer[k];
         });
     });
+    out.folder = configuredFolder;
     // числа и логические значения из YAML бывают строками
     ["bigShare", "bigMinChars", "excerptChars", "ratingMax", "featuredMinScore", "lowScore", "searchDebounce", "yearGoal", "yearGoalPages", "wideShare", "minutesPerPage"].forEach((k) => {
         const n = parseFloat(String(out[k]).replace(",", "."));
