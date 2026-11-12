@@ -87,10 +87,9 @@ function fill(el, c) {
         const node = el.querySelector(sel);
         if (node && node.textContent !== text) node.textContent = text;
     };
-    if (el.dataset.role === "insight") {
-        set(".bg-insight-text", showText(c));
-        return; // подпись под инсайтом — книга и автор, она не меняется
-    }
+    // Инсайты не гидратируются из кэша книги: их заметка выбрана отдельно в Stats.insights().
+    // Защитная проверка на случай прямого вызова fill для элемента инсайта.
+    if (el.dataset.role === "insight") return;
     set(".bg-quote-text", showText(c));
     set(".bg-cap-text", captionOf(c));
     el.dataset.path = c.path;

@@ -124,11 +124,12 @@ async function mount(container, books, opts) {
         state.genre = genreOptions.find((genre) => sameGenre(genre, state.genre)) || "all";
     }
     const stats = cfg.showStats ? Stats.compute(books) : null;
-    const monthInsight = cfg.showStats && stats ? await Stats.insight(books, stats) : null;
-    const yearInsight = cfg.showStats && stats ? await Stats.yearInsight(books, stats, monthInsight && monthInsight.book.path) : null;
-    const randomInsight = cfg.showStats && stats
-        ? await Stats.randomInsight(books, [monthInsight && monthInsight.book.path, yearInsight && yearInsight.book.path].filter(Boolean))
-        : null;
+    const insights = cfg.showStats && stats
+        ? await Stats.insights(books, stats)
+        : { month: null, year: null, random: null };
+    const monthInsight = insights.month;
+    const yearInsight = insights.year;
+    const randomInsight = insights.random;
     const years = Stats.years(books);
     let pulseYear = years.includes(keep.pulseYear) ? keep.pulseYear : years[0];
     const sync = () => Object.assign(keep, { state, view, tagsOpen, pulseYear });

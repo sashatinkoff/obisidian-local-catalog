@@ -1,7 +1,7 @@
 {
   "id": "book-gallery",
   "name": "Book Gallery",
-  "version": "1.1.7",
+  "version": "1.2.4",
   "minAppVersion": "1.4.0",
   "description": "Каталог прочитанных книг: бенто-карточки, таблица, фильтры, статистика и пульс года. Без Dataview.",
   "author": "sashatinkoff",

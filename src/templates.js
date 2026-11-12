@@ -46,10 +46,11 @@ function sparkline(series) {
 }
 
 function insightCard(insight, label) {
-    if (!insight || !insight.book) return "";
+    if (!insight || !insight.book || !insight.note || !insight.note.quote) return "";
     const b = insight.book;
-    const c = Notes.content(b);
-    const text = c ? (c.source === "excerpt" ? c.quote : `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}»`) : "";
+    // Используем именно заметку, выбранную алгоритмом инсайта, а не общий кэш карточки книги.
+    const c = insight.note;
+    const text = `«${c.quote.replace(/^[«"“”\s]+|[»"“”\s]+$/g, "")}"`;
     const target = { path: b.path, name: b.authorText ? `${b.title} — ${b.authorText}` : b.title };
     return `
 <div class="bg-stat bg-stat--insight" data-book="${esc(b.path)}" data-role="insight">
@@ -57,7 +58,7 @@ function insightCard(insight, label) {
         <span class="bg-eyebrow bg-mono"><span class="bg-eyebrow-ico">${icon("quote")}</span>${label}</span>
         <span class="bg-eyebrow-ico">${icon("link")}</span>
     </div>
-    <div class="bg-insight-text">${text ? esc(text) : "…"}</div>
+    <div class="bg-insight-text">${esc(text)}</div>
     <a class="bg-insight-link bg-mono" href="#" data-action="open" data-path="${esc(target.path)}">${icon("file")}<span>${esc(target.name)}</span></a>
 </div>`;
 }

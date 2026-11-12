@@ -246,56 +246,72 @@ function progress(books, year, opts) {
     };
 }
 
-// Инсайты выбираются по доступному тексту: сначала книги с цитатой или заметками,
-// затем остальные (для них Notes.ensure попробует взять отрывок из самой заметки).
-const byInsightScore = (a, b) => (b.score5 ?? -1) - (a.score5 ?? -1) || b.dateMs - a.dateMs;
+// Инсайты выбираются только по заметкам-цитатам из настроенной папки.
+// Все три карточки формируются одной последовательной операцией: уже показанные
+// заметки и одинаковый текст цитаты исключаются из следующих выборок.
+const noteIdentity = (note) => String(note && (note.path || note.note && note.note.path) || "")
+    .replace(/\\/g, "/").normalize("NFC").toLocaleLowerCase("ru-RU");
+const quoteIdentity = (note) => String(note && note.quote || "")
+    .normalize("NFC").replace(/\s+/g, " ").trim().toLocaleLowerCase("ru-RU");
 
-async function firstWithContent(list) {
+async function pickUniqueInsight(list, usedNotes, usedQuotes, usedBooks, notesCache) {
     const Notes = ctx.lib.notes;
-    for (const book of list) {
-        await Notes.ensure(book);
-        if (Notes.content(book)) return { book };
-    }
-    return null;
-}
-
-async function bestInsight(list) {
-    const books = list || [];
-    const preferred = books.filter((b) => b.quote || (b.noteList && b.noteList.length)).sort(byInsightScore);
-    const found = await firstWithContent(preferred);
-    return found || firstWithContent(books.slice().sort(byInsightScore));
-}
-
-// «Инсайт месяца»: самая высоко оценённая книга последнего месяца с доступным текстом.
-// Если подходящих книг нет — ищем среди всего каталога.
-async function insight(books, stats) {
-    return bestInsight(stats && stats.month && stats.month.length ? stats.month : books);
-}
-
-// «Инсайт года» относится к последнему году чтения, который используется и в статистике месяца.
-// По возможности не дублируем книгу из карточки месяца.
-async function yearInsight(books, stats, excludePath) {
-    if (!stats || !stats.month || !stats.month.length) return null;
-    const year = new Date(stats.month[0].dateMs).getFullYear();
-    const inYear = books.filter((b) => b.dateMs && new Date(b.dateMs).getFullYear() === year);
-    const otherBooks = excludePath ? inYear.filter((b) => b.path !== excludePath) : inYear;
-    return (await bestInsight(otherBooks)) || bestInsight(inYear);
-}
-
-// Случайный инсайт — случайная книга с доступной цитатой, заметкой или отрывком.
-// Книги из двух соседних карточек исключаются, пока есть другие варианты.
-async function randomInsight(books, excludePaths) {
-    const excluded = new Set(excludePaths || []);
-    const shuffle = (list) => {
-        const result = list.slice();
-        for (let i = result.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [result[i], result[j]] = [result[j], result[i]];
+    const candidates = [];
+    for (const book of list || []) {
+        try {
+            let notes = notesCache.get(book.path);
+            if (!notes) {
+                notes = await Notes.insightNotes(book);
+                notesCache.set(book.path, notes);
+            }
+            const available = notes.filter((note) => {
+                const pathKey = noteIdentity(note);
+                const textKey = quoteIdentity(note);
+                return pathKey && textKey && !usedNotes.has(pathKey) && !usedQuotes.has(textKey);
+            });
+            if (available.length) candidates.push({ book, notes: available });
+        } catch (e) {
+            // Одна повреждённая заметка не должна мешать остальным кандидатам.
         }
-        return result;
-    };
-    const others = shuffle(books.filter((b) => !excluded.has(b.path)));
-    return (await firstWithContent(others)) || firstWithContent(shuffle(books));
+    }
+    if (!candidates.length) return null;
+
+    // По возможности не повторяем книгу. Если других книг нет, допускаем другую
+    // заметку той же книги, но никогда не повторяем файл или текст цитаты.
+    const differentBooks = candidates.filter(({ book }) => !usedBooks.has(noteIdentity({ path: book.path })));
+    const pool = differentBooks.length ? differentBooks : candidates;
+    const bookCandidate = pool[Math.floor(Math.random() * pool.length)];
+    const note = bookCandidate.notes[Math.floor(Math.random() * bookCandidate.notes.length)];
+
+    usedNotes.add(noteIdentity(note));
+    usedQuotes.add(quoteIdentity(note));
+    usedBooks.add(noteIdentity({ path: bookCandidate.book.path }));
+    return { book: bookCandidate.book, note };
 }
 
-module.exports = { SIZES, sizeOf, compute, insight, yearInsight, randomInsight, pulse, years, progress, goalFor };
+// Месяц, год и случайный инсайт получают общий набор уже использованных заметок.
+// Если уникальных заметок меньше трёх, недостающая карточка скрывается вместо повтора.
+async function insights(books, stats) {
+    const usedNotes = new Set();
+    const usedQuotes = new Set();
+    const usedBooks = new Set();
+    const notesCache = new Map();
+
+    const monthBooks = stats && Array.isArray(stats.month) ? stats.month : [];
+    const month = await pickUniqueInsight(monthBooks, usedNotes, usedQuotes, usedBooks, notesCache);
+
+    let inYear = [];
+    if (monthBooks.length) {
+        const latestDate = Math.max(...monthBooks.map((book) => Number(book.dateMs) || 0));
+        if (latestDate) {
+            const year = new Date(latestDate).getFullYear();
+            inYear = (books || []).filter((book) => book.dateMs && new Date(book.dateMs).getFullYear() === year);
+        }
+    }
+    const year = await pickUniqueInsight(inYear, usedNotes, usedQuotes, usedBooks, notesCache);
+    const random = await pickUniqueInsight(books || [], usedNotes, usedQuotes, usedBooks, notesCache);
+
+    return { month, year, random };
+}
+
+module.exports = { SIZES, sizeOf, compute, insights, pulse, years, progress, goalFor };
